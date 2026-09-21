@@ -1,6 +1,0 @@
-{
-  "name": "Digital Product Sheba",
-  "description": "Premium digital app and subscription marketplace in Bangladesh featuring OTT, AI tools, software licenses, bKash/Nagad/Rocket payment workflows, and instant delivery.",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

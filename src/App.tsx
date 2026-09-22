@@ -38,11 +38,59 @@ const MainContent: React.FC = () => {
     sortBy,
     setSortBy,
     siteSettings,
+    currentUser,
+    authLoading,
+    setIsAdminDashboardOpen,
+    setIsUserDashboardOpen,
+    setIsAuthModalOpen,
+    showToast,
     lang,
     t,
   } = useStore();
 
   const [faqOpenIndex, setFaqOpenIndex] = useState<number | null>(0);
+
+  // Security guard for direct URL navigation: /admin or #admin
+  React.useEffect(() => {
+    const handleAdminRoute = () => {
+      const isTryingToAccessAdmin =
+        window.location.pathname.startsWith('/admin') ||
+        window.location.hash.toLowerCase().includes('admin');
+
+      if (isTryingToAccessAdmin) {
+        if (authLoading) return;
+
+        if (!currentUser) {
+          showToast(
+            lang === 'bn'
+              ? 'অ্যাডমিন প্যানেলে প্রবেশের জন্য লগইন করুন।'
+              : 'Please log in with an administrator account.',
+            'info'
+          );
+          setIsAuthModalOpen(true);
+        } else if (currentUser.role === 'admin') {
+          setIsAdminDashboardOpen(true);
+        } else {
+          showToast(
+            lang === 'bn'
+              ? 'অ্যাক্সেস প্রত্যাখ্যান করা হয়েছে: আপনার অ্যাডমিন অনুমতি নেই।'
+              : 'Access Denied: You do not have administrator permissions.',
+            'error'
+          );
+          setIsAdminDashboardOpen(false);
+          setIsUserDashboardOpen(true);
+        }
+      }
+    };
+
+    handleAdminRoute();
+    window.addEventListener('hashchange', handleAdminRoute);
+    window.addEventListener('popstate', handleAdminRoute);
+    return () => {
+      window.removeEventListener('hashchange', handleAdminRoute);
+      window.removeEventListener('popstate', handleAdminRoute);
+    };
+  }, [currentUser, authLoading, lang]);
 
   // Filter products by category and search
   const filteredProducts = products.filter((product) => {

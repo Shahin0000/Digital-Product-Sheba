@@ -434,15 +434,22 @@ export const initialProducts: Product[] = [
 ];
 
 export const initialSiteSettings: SiteSettings = {
+  siteName: 'Digital Product Sheba',
   storeName: 'Digital Product Sheba',
+  siteLogo: '',
+  contactEmail: 'support@digitalproductsheba.com',
+  supportEmail: 'support@digitalproductsheba.com',
+  contactPhone: '+8801712345678',
+  whatsappSupportNumber: '+8801712345678',
   bkashNumber: '01712-345678',
   bkashType: 'Personal',
   nagadNumber: '01898-765432',
   nagadType: 'Personal',
   rocketNumber: '01911-223344',
   rocketType: 'Personal',
-  whatsappSupportNumber: '+8801712345678',
-  supportEmail: 'support@digitalproductsheba.com',
+  paymentInstructions: 'Send money to our bKash/Nagad number, copy the TrxID and paste it during checkout. We will verify and deliver within 5-15 minutes.',
+  siteMaintenanceMode: false,
+  deliveryMessage: 'Thank you for your order! Your digital product credentials or license link have been issued.',
   announcementEn: '🔥 Special Offer: Use coupon "SHEBA10" to get flat 10% instant discount on all digital licenses!',
   announcementBn: '🔥 বিশেষ অফার: "SHEBA10" কুপন ব্যবহার করে যেকোনো অর্ডারে পান ইনস্ট্যান্ট ১০% ছাড়!',
 };

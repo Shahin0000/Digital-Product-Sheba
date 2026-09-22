@@ -40,6 +40,7 @@ export interface Product {
   variants: ProductVariant[];
   featured?: boolean;
   trending?: boolean;
+  enabled?: boolean;
   // Digital product delivery configuration
   isDigitalProduct?: boolean;
   digitalFileName?: string;
@@ -92,17 +93,22 @@ export interface DigitalDeliveryItem {
 }
 
 export interface DeliveryRecord {
-  id: string; // matches orderId
+  id: string; // matches deliveryId / orderId
+  deliveryId?: string;
   orderId: string;
   userId: string;
   customerName?: string;
   customerEmail?: string;
   customerPhone?: string;
   productId: string;
+  productTitle?: string;
   productName: string;
+  variantTitle?: string;
+  deliveryType?: DeliveryType | string;
   deliveryMethod?: 'file' | 'credentials' | 'external' | 'external_link' | string;
   externalAccessUrl?: string;
   status: 'delivered';
+  createdAt?: string;
   deliveredAt: string;
   deliveredAtIso?: string;
   downloadCount: number;
@@ -117,6 +123,7 @@ export interface DeliveryRecord {
   fileName?: string;
   fileSize?: number;
   storagePath?: string;
+  downloadLink?: string;
   downloadUrl?: string;
   credentialsOrKey?: string;
   notes?: string;
@@ -183,18 +190,33 @@ export interface User {
   joinedDate: string;
 }
 
+export interface AdminUser {
+  id: string; // UID
+  name: string;
+  email: string;
+  role: 'admin';
+  createdAt: string;
+}
+
 export interface SiteSettings {
+  siteName: string;
   storeName: string;
+  siteLogo?: string;
+  contactEmail: string;
+  supportEmail: string;
+  contactPhone: string;
+  whatsappSupportNumber: string;
   bkashNumber: string;
   bkashType: 'Merchant' | 'Personal';
   nagadNumber: string;
   nagadType: 'Merchant' | 'Personal';
   rocketNumber: string;
   rocketType: 'Personal';
-  whatsappSupportNumber: string;
+  paymentInstructions?: string;
+  siteMaintenanceMode?: boolean;
+  deliveryMessage?: string;
   announcementEn: string;
   announcementBn: string;
-  supportEmail: string;
 }
 
 export interface ToastMessage {

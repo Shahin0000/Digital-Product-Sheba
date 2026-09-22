@@ -1,0 +1,138 @@
+{
+  "entities": {
+    "Admin": {
+      "title": "Admin",
+      "description": "System administrator authorized to manage store operations",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "User Firebase Authentication UID" },
+        "name": { "type": "string", "description": "Admin full name" },
+        "email": { "type": "string", "format": "email", "description": "Admin email address" },
+        "role": { "type": "string", "enum": ["admin"], "description": "Role identifier" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of creation" }
+      },
+      "required": ["id", "email", "role"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Customer account profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Firebase Authentication UID" },
+        "name": { "type": "string", "description": "Full customer name" },
+        "email": { "type": "string", "format": "email", "description": "Account email address" },
+        "phone": { "type": "string", "description": "Contact telephone or WhatsApp number" },
+        "role": { "type": "string", "enum": ["customer", "admin"], "description": "User privilege role" },
+        "joinedDate": { "type": "string", "description": "Registration date (YYYY-MM-DD)" }
+      },
+      "required": ["id", "email", "role"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Digital product catalog item with pricing and delivery variants",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique product ID" },
+        "titleEn": { "type": "string", "description": "English product title" },
+        "titleBn": { "type": "string", "description": "Bengali product title" },
+        "categoryId": { "type": "string", "description": "Product category ID" },
+        "image": { "type": "string", "description": "Banner or logo image URL" },
+        "deliveryType": { "type": "string", "enum": ["instant_key", "shared_account", "private_mail", "custom_activation"], "description": "Delivery protocol" },
+        "enabled": { "type": "boolean", "description": "Visibility and purchasing active status" },
+        "rating": { "type": "number", "description": "Customer star rating (0-5)" },
+        "reviewsCount": { "type": "number", "description": "Number of product reviews" },
+        "totalSold": { "type": "number", "description": "Total sales volume" },
+        "featured": { "type": "boolean", "description": "Highlighted on home showcase" },
+        "trending": { "type": "boolean", "description": "Popular badge indicator" }
+      },
+      "required": ["id", "titleEn", "titleBn", "categoryId", "deliveryType"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Digital purchase order with mobile banking payment records",
+      "type": "object",
+      "properties": {
+        "orderId": { "type": "string", "description": "Unique order tracking code (e.g. DPS-94812)" },
+        "userId": { "type": "string", "description": "Firebase Auth UID of customer" },
+        "customerName": { "type": "string", "description": "Name of purchaser" },
+        "customerEmail": { "type": "string", "format": "email", "description": "Delivery email" },
+        "customerPhone": { "type": "string", "description": "Customer mobile / WhatsApp number" },
+        "items": { "type": "array", "description": "Purchased product variant items" },
+        "subtotal": { "type": "number", "description": "Gross total amount before discounts" },
+        "discount": { "type": "number", "description": "Applied discount amount" },
+        "totalAmount": { "type": "number", "description": "Net payable amount in BDT" },
+        "paymentMethod": { "type": "string", "enum": ["bkash", "nagad", "rocket", "bank"], "description": "Payment gateway" },
+        "senderNumber": { "type": "string", "description": "Customer mobile account number used to pay" },
+        "trxId": { "type": "string", "description": "bKash / Nagad transaction identifier" },
+        "status": { "type": "string", "enum": ["pending", "verifying", "processing", "completed", "cancelled"], "description": "Order processing status" },
+        "adminNotes": { "type": "string", "description": "Internal administrative notes" },
+        "createdAt": { "type": "string", "description": "Order placement timestamp" }
+      },
+      "required": ["userId", "customerName", "customerPhone", "totalAmount", "paymentMethod", "trxId", "status"]
+    },
+    "Delivery": {
+      "title": "Delivery",
+      "description": "Fulfillment record containing license key or download access for a customer order",
+      "type": "object",
+      "properties": {
+        "deliveryId": { "type": "string", "description": "Unique delivery ID matching orderId" },
+        "orderId": { "type": "string", "description": "Associated order ID" },
+        "userId": { "type": "string", "description": "UID of recipient user" },
+        "productId": { "type": "string", "description": "Target product ID" },
+        "productTitle": { "type": "string", "description": "Name of product" },
+        "variantTitle": { "type": "string", "description": "Selected plan or duration" },
+        "deliveryType": { "type": "string", "description": "Instant key, shared account, or private mail" },
+        "credentialsOrKey": { "type": "string", "description": "Secret license key, email credentials, or invite code" },
+        "downloadLink": { "type": "string", "description": "Signed file download URL or access link" },
+        "notes": { "type": "string", "description": "Delivery and setup instructions for customer" },
+        "downloadCount": { "type": "number", "description": "Number of times customer accessed asset" },
+        "createdAt": { "type": "string", "description": "Timestamp created" },
+        "deliveredAt": { "type": "string", "description": "Timestamp fulfilled" }
+      },
+      "required": ["deliveryId", "orderId", "userId", "productId"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global store settings and mobile banking gateway numbers",
+      "type": "object",
+      "properties": {
+        "siteName": { "type": "string", "description": "Public store name" },
+        "siteLogo": { "type": "string", "description": "Store logo image URL" },
+        "contactEmail": { "type": "string", "format": "email", "description": "Support email address" },
+        "contactPhone": { "type": "string", "description": "Official support telephone or WhatsApp" },
+        "bkashNumber": { "type": "string", "description": "Merchant or Personal bKash number" },
+        "nagadNumber": { "type": "string", "description": "Merchant or Personal Nagad number" },
+        "paymentInstructions": { "type": "string", "description": "Payment instructions text for customers" },
+        "siteMaintenanceMode": { "type": "boolean", "description": "Maintenance mode indicator" },
+        "deliveryMessage": { "type": "string", "description": "Standard delivery message note" }
+      },
+      "required": ["siteName", "bkashNumber", "nagadNumber"]
+    }
+  },
+  "firestore": {
+    "/admins/{adminId}": {
+      "schema": "Admin",
+      "description": "Admin authorization mapping documents"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Registered customer profiles and role mapping"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Catalog of digital products and software subscriptions"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Purchased orders placed by authenticated customers"
+    },
+    "/deliveries/{deliveryId}": {
+      "schema": "Delivery",
+      "description": "Product delivery credentials and fulfillment links"
+    },
+    "/settings/{settingId}": {
+      "schema": "Settings",
+      "description": "Store configuration, payment numbers, and branding"
+    }
+  }
+}

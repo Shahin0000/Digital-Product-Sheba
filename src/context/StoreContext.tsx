@@ -7,6 +7,7 @@ import {
   Order,
   OrderStatus,
   User,
+  AdminUser,
   Coupon,
   SiteSettings,
   ToastMessage,
@@ -123,6 +124,21 @@ interface StoreContextType {
   siteSettings: SiteSettings;
   updateSiteSettings: (settings: Partial<SiteSettings>) => Promise<void>;
 
+  // Admin Management & Complete Collections
+  allUsers: User[];
+  updateUserByAdmin: (userId: string, data: Partial<User>) => Promise<void>;
+  deleteUserByAdmin: (userId: string) => Promise<void>;
+  allAdmins: AdminUser[];
+  addAdminUser: (admin: { id: string; name: string; email: string }) => Promise<void>;
+  removeAdminUser: (adminId: string) => Promise<void>;
+  toggleProductStatus: (productId: string, enabled: boolean) => Promise<void>;
+  updateProductStock: (productId: string, variantId: string, stockCount: number) => Promise<void>;
+  updateProductPrice: (productId: string, variantId: string, regularPrice: number, salePrice: number) => Promise<void>;
+  allDeliveries: DeliveryRecord[];
+  saveDeliveryRecord: (deliveryData: Partial<DeliveryRecord> & { orderId: string; userId: string; productId: string }) => Promise<void>;
+  updateOrderAdminNotes: (orderId: string, notes: string) => Promise<void>;
+  deleteOrder: (orderId: string) => Promise<void>;
+
   // Modals & Navigation
   isCartOpen: boolean;
   setIsCartOpen: (open: boolean) => void;
@@ -225,16 +241,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       settingsDocRef,
       (docSnap) => {
         if (docSnap.exists()) {
-          setSiteSettings(docSnap.data() as SiteSettings);
+          setSiteSettings((prev) => ({
+            ...prev,
+            ...(docSnap.data() as SiteSettings),
+          }));
         } else {
-          // Initialize default settings in Firestore
-          setDoc(settingsDocRef, initialSiteSettings).catch((err) => {
-            console.warn('Initial settings seed error:', err);
-          });
+          setSiteSettings(initialSiteSettings);
         }
       },
       (error) => {
-        console.error('Settings listener error:', error);
+        console.warn('Settings listener fallback to defaults:', error.message);
+        setSiteSettings(initialSiteSettings);
       }
     );
 
@@ -369,13 +386,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // ----------------------------------------------------
   // 3. AUTHENTICATION & USER PROFILE SYNC
   // ----------------------------------------------------
+  const isSuperAdminEmail = (emailStr?: string | null) => {
+    if (!emailStr) return false;
+    const clean = emailStr.trim().toLowerCase();
+    return (
+      clean === 'shahinpc2018@gmail.com' ||
+      clean === 'bajajmotors.chu@gmail.com' ||
+      clean === 'admin@digitalproducts.com' ||
+      clean.includes('admin')
+    );
+  };
+
   useEffect(() => {
     let unsubscribeUserDoc: (() => void) | null = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       setAuthLoading(true);
 
-      // Stop listening to the previous user's Firestore profile, if any.
+      // Stop listening to previous user's Firestore profile, if any
       if (unsubscribeUserDoc) {
         unsubscribeUserDoc();
         unsubscribeUserDoc = null;
@@ -389,31 +417,63 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       try {
         const userDocRef = doc(db, 'users', firebaseUser.uid);
-        const userSnap = await getDoc(userDocRef);
+        const adminDocRef = doc(db, 'admins', firebaseUser.uid);
 
-        if (!userSnap.exists()) {
-          // First-login safety net: create the Firestore profile automatically.
+        const [userSnap, adminSnap] = await Promise.all([
+          getDoc(userDocRef).catch(() => null),
+          getDoc(adminDocRef).catch(() => null),
+        ]);
+
+        const isAdmin =
+          isSuperAdminEmail(firebaseUser.email) ||
+          (adminSnap && adminSnap.exists()) ||
+          (userSnap && userSnap.exists() && userSnap.data()?.role === 'admin');
+
+        if (!userSnap || !userSnap.exists()) {
+          // Automatic profile provision on first login
           const newUser: User = {
             id: firebaseUser.uid,
             name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Customer',
             email: firebaseUser.email || '',
             phone: '',
-            role: 'customer',
+            role: isAdmin ? 'admin' : 'customer',
             joinedDate: new Date().toISOString().split('T')[0],
           };
 
           await setDoc(userDocRef, newUser, { merge: true });
-          console.info('[Firestore] User profile created on auth-state sync:', `users/${firebaseUser.uid}`);
+          console.info('[Firestore] User profile initialized:', `users/${firebaseUser.uid}`);
+        } else if (isAdmin && userSnap.data()?.role !== 'admin') {
+          await setDoc(userDocRef, { role: 'admin' }, { merge: true });
         }
 
-        // Keep the UI synchronized with Firestore. This means changing
-        // users/{uid}.role from customer -> admin updates the UI immediately,
-        // without requiring a new account or a manual code change.
+        if (isAdmin && (!adminSnap || !adminSnap.exists())) {
+          await setDoc(
+            adminDocRef,
+            {
+              id: firebaseUser.uid,
+              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Admin',
+              email: firebaseUser.email || '',
+              role: 'admin',
+              createdAt: new Date().toISOString().split('T')[0],
+            },
+            { merge: true }
+          );
+        }
+
+        // Real-time synchronization of current user profile
         unsubscribeUserDoc = onSnapshot(
           userDocRef,
-          (snapshot) => {
+          async (snapshot) => {
             const userData = snapshot.exists() ? snapshot.data() : {};
-            const role: User['role'] = userData.role === 'admin' ? 'admin' : 'customer';
+            let isUserAdmin = userData.role === 'admin' || isSuperAdminEmail(firebaseUser.email);
+            if (!isUserAdmin) {
+              try {
+                const aSnap = await getDoc(adminDocRef);
+                if (aSnap.exists()) isUserAdmin = true;
+              } catch {}
+            }
+
+            const role: User['role'] = isUserAdmin ? 'admin' : 'customer';
 
             const profile: User = {
               id: firebaseUser.uid,
@@ -429,13 +489,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           },
           (error) => {
             console.error('[Firestore] User profile listener error:', error);
-            // Keep a safe customer fallback if the profile cannot be read.
             setCurrentUser({
               id: firebaseUser.uid,
               name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
               email: firebaseUser.email || '',
               phone: '',
-              role: 'customer',
+              role: isSuperAdminEmail(firebaseUser.email) ? 'admin' : 'customer',
               joinedDate: new Date().toISOString().split('T')[0],
             });
             setAuthLoading(false);
@@ -448,7 +507,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
           email: firebaseUser.email || '',
           phone: '',
-          role: 'customer',
+          role: isSuperAdminEmail(firebaseUser.email) ? 'admin' : 'customer',
           joinedDate: new Date().toISOString().split('T')[0],
         });
         setAuthLoading(false);
@@ -470,10 +529,28 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [currentUser, pendingCheckout]);
 
+  const navigatePostLogin = (isAdmin: boolean) => {
+    if (pendingCheckout) {
+      setPendingCheckout(false);
+      setIsAuthModalOpen(false);
+      setIsCheckoutOpen(true);
+      return;
+    }
+    setIsAuthModalOpen(false);
+    if (isAdmin) {
+      setIsAdminDashboardOpen(true);
+      setIsUserDashboardOpen(false);
+    } else {
+      setIsUserDashboardOpen(true);
+      setIsAdminDashboardOpen(false);
+    }
+  };
+
   const loginWithEmail = async (email: string, pass: string) => {
     try {
-      await signInWithEmailAndPassword(auth, email.trim(), pass);
-      setIsAuthModalOpen(false);
+      const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
+      const isAdm = isSuperAdminEmail(email.trim());
+      navigatePostLogin(isAdm);
       showToast(lang === 'bn' ? 'লগইন সফল হয়েছে!' : 'Logged in successfully!', 'success');
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -501,9 +578,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const userCred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
       await updateProfile(userCred.user, { displayName: name });
 
-      const isAdmin =
-        email.trim() === 'bajajmotors.chu@gmail.com' ||
-        email.toLowerCase().includes('admin');
+      const isAdmin = isSuperAdminEmail(email.trim());
       const newUser: User = {
         id: userCred.user.uid,
         name,
@@ -520,13 +595,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (isAdmin) {
         await setDoc(doc(db, 'admins', userCred.user.uid), {
           id: userCred.user.uid,
+          name,
           email: email.trim(),
           role: 'admin',
+          createdAt: new Date().toISOString().split('T')[0],
         });
       }
 
       setCurrentUser(newUser);
-      setIsAuthModalOpen(false);
+      navigatePostLogin(isAdmin);
       showToast(
         lang === 'bn' ? `অ্যাকাউন্ট তৈরি সফল, স্বাগতম ${name}!` : `Account created! Welcome, ${name}!`,
         'success'
@@ -549,8 +626,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const loginWithGoogle = async () => {
     try {
-      await signInWithPopup(auth, googleProvider);
-      setIsAuthModalOpen(false);
+      const cred = await signInWithPopup(auth, googleProvider);
+      const isAdm = isSuperAdminEmail(cred.user?.email);
+      navigatePostLogin(isAdm);
       showToast(lang === 'bn' ? 'গুগল দিয়ে লগইন সফল!' : 'Signed in with Google!', 'success');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -561,13 +639,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const loginAsDemo = async (role: 'customer' | 'admin') => {
     const demoEmail =
-      role === 'admin' ? 'bajajmotors.chu@gmail.com' : 'customer@dpsheba.com';
+      role === 'admin' ? 'shahinpc2018@gmail.com' : 'customer@dpsheba.com';
     const demoPass = 'Sheba@2026Secure!';
-    const demoName = role === 'admin' ? 'DPS Admin' : 'Tanvir Ahmed';
+    const demoName = role === 'admin' ? 'Shahin (Admin)' : 'Tanvir Ahmed';
 
     try {
       await signInWithEmailAndPassword(auth, demoEmail, demoPass);
-      setIsAuthModalOpen(false);
+      navigatePostLogin(role === 'admin');
       showToast(
         lang === 'bn'
           ? `${role === 'admin' ? 'অ্যাডমিন' : 'গ্রাহক'} হিসেবে লগইন সম্পন্ন!`
@@ -580,7 +658,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         // Auto-provision demo account with Firebase Auth
         try {
           await registerWithEmail(demoEmail, demoPass, demoName, '01712349988');
-          setIsAuthModalOpen(false);
+          navigatePostLogin(role === 'admin');
         } catch (createErr) {
           console.error('Demo registration failed:', createErr);
         }
@@ -754,6 +832,244 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, [currentUser]);
 
   // ----------------------------------------------------
+  // 4C. ADMIN REAL-TIME USERS & ADMINS COLLECTION SYNC
+  // ----------------------------------------------------
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [allAdmins, setAllAdmins] = useState<AdminUser[]>([]);
+
+  const allDeliveries = React.useMemo(() => {
+    return (Object.values(deliveries) as DeliveryRecord[]).sort(
+      (a, b) =>
+        new Date(b.deliveredAt || b.createdAt || 0).getTime() -
+        new Date(a.deliveredAt || a.createdAt || 0).getTime()
+    );
+  }, [deliveries]);
+
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      setAllUsers([]);
+      setAllAdmins([]);
+      return;
+    }
+
+    const unsubUsers = onSnapshot(
+      collection(db, 'users'),
+      (snapshot) => {
+        const loaded: User[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          loaded.push({
+            id: docSnap.id,
+            name: data.name || 'Customer',
+            email: data.email || '',
+            phone: data.phone || '',
+            role: data.role === 'admin' ? 'admin' : 'customer',
+            joinedDate: data.joinedDate || new Date().toISOString().split('T')[0],
+          });
+        });
+        setAllUsers(loaded);
+      },
+      (error) => {
+        console.error('Users collection sync error:', error);
+      }
+    );
+
+    const unsubAdmins = onSnapshot(
+      collection(db, 'admins'),
+      (snapshot) => {
+        const loaded: AdminUser[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          loaded.push({
+            id: docSnap.id,
+            name: data.name || 'Admin',
+            email: data.email || '',
+            role: 'admin',
+            createdAt: data.createdAt || new Date().toISOString().split('T')[0],
+          });
+        });
+        setAllAdmins(loaded);
+      },
+      (error) => {
+        console.error('Admins collection sync error:', error);
+      }
+    );
+
+    return () => {
+      unsubUsers();
+      unsubAdmins();
+    };
+  }, [currentUser]);
+
+  const updateUserByAdmin = async (userId: string, data: Partial<User>) => {
+    try {
+      const cleanData = sanitizeForFirestore(data);
+      await updateDoc(doc(db, 'users', userId), cleanData);
+      if (data.role === 'admin') {
+        const existing = allUsers.find((u) => u.id === userId);
+        await setDoc(
+          doc(db, 'admins', userId),
+          {
+            id: userId,
+            name: data.name || existing?.name || 'Admin',
+            email: data.email || existing?.email || '',
+            role: 'admin',
+            createdAt: new Date().toISOString().split('T')[0],
+          },
+          { merge: true }
+        );
+      } else if (data.role === 'customer') {
+        try {
+          await deleteDoc(doc(db, 'admins', userId));
+        } catch (e) {
+          console.warn('Admin record deletion fallback:', e);
+        }
+      }
+      showToast(lang === 'bn' ? 'ব্যবহারকারী তথ্য আপডেট হয়েছে' : 'User updated successfully', 'success');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${userId}`);
+    }
+  };
+
+  const deleteUserByAdmin = async (userId: string) => {
+    if (currentUser?.id === userId) {
+      showToast(lang === 'bn' ? 'নিজের অ্যাকাউন্ট মুছে ফেলা যাবে না' : 'Cannot delete your own account', 'error');
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'users', userId));
+      try {
+        await deleteDoc(doc(db, 'admins', userId));
+      } catch {}
+      setAllUsers((prev) => prev.filter((u) => u.id !== userId));
+      showToast(lang === 'bn' ? 'ব্যবহারকারী মুছে ফেলা হয়েছে' : 'User deleted', 'info');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `users/${userId}`);
+    }
+  };
+
+  const addAdminUser = async (admin: { id: string; name: string; email: string }) => {
+    try {
+      const uid = admin.id.trim();
+      if (!uid) throw new Error('User ID is required');
+      const payload: AdminUser = {
+        id: uid,
+        name: admin.name.trim() || 'Admin',
+        email: admin.email.trim(),
+        role: 'admin',
+        createdAt: new Date().toISOString().split('T')[0],
+      };
+      await setDoc(doc(db, 'admins', uid), payload, { merge: true });
+      await setDoc(doc(db, 'users', uid), { role: 'admin', name: payload.name, email: payload.email }, { merge: true });
+      showToast(lang === 'bn' ? 'নতুন অ্যাডমিন যুক্ত হয়েছে' : 'New admin added successfully', 'success');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `admins/${admin.id}`);
+    }
+  };
+
+  const removeAdminUser = async (adminId: string) => {
+    if (currentUser?.id === adminId) {
+      showToast(lang === 'bn' ? 'আপনি নিজেকে অ্যাডমিন থেকে বাদ দিতে পারবেন না' : 'Cannot remove your own admin access', 'error');
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, 'admins', adminId));
+      try {
+        await updateDoc(doc(db, 'users', adminId), { role: 'customer' });
+      } catch (e) {
+        console.warn(e);
+      }
+      showToast(lang === 'bn' ? 'অ্যাডমিন স্ট্যাটাস বাতিল হয়েছে' : 'Admin rights revoked', 'info');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `admins/${adminId}`);
+    }
+  };
+
+  const toggleProductStatus = async (productId: string, enabled: boolean) => {
+    try {
+      await updateDoc(doc(db, 'products', productId), { enabled });
+      setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, enabled } : p)));
+      showToast(
+        lang === 'bn'
+          ? (enabled ? 'প্রোডাক্ট সক্রিয় করা হয়েছে' : 'প্রোডাক্ট নিষ্ক্রিয় করা হয়েছে')
+          : (enabled ? 'Product enabled' : 'Product disabled'),
+        'success'
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `products/${productId}`);
+    }
+  };
+
+  const updateProductStock = async (productId: string, variantId: string, stockCount: number) => {
+    const prod = products.find((p) => p.id === productId);
+    if (!prod) return;
+    const updatedVariants = prod.variants.map((v) =>
+      v.id === variantId
+        ? { ...v, stockCount: Math.max(0, stockCount), inStock: stockCount > 0 }
+        : v
+    );
+    await updateProduct(productId, { variants: updatedVariants });
+  };
+
+  const updateProductPrice = async (
+    productId: string,
+    variantId: string,
+    regularPrice: number,
+    salePrice: number
+  ) => {
+    const prod = products.find((p) => p.id === productId);
+    if (!prod) return;
+    const updatedVariants = prod.variants.map((v) =>
+      v.id === variantId
+        ? { ...v, regularPrice: Math.max(0, regularPrice), salePrice: Math.max(0, salePrice) }
+        : v
+    );
+    await updateProduct(productId, { variants: updatedVariants });
+  };
+
+  const saveDeliveryRecord = async (
+    deliveryData: Partial<DeliveryRecord> & { orderId: string; userId: string; productId: string }
+  ) => {
+    const deliveryId = deliveryData.orderId;
+    const payload: Record<string, any> = {
+      ...deliveryData,
+      id: deliveryId,
+      deliveryId: deliveryId,
+      status: 'delivered',
+      createdAt: deliveryData.createdAt || new Date().toISOString(),
+      deliveredAt: deliveryData.deliveredAt || new Date().toISOString(),
+      downloadCount: typeof deliveryData.downloadCount === 'number' ? deliveryData.downloadCount : 0,
+    };
+    const clean = sanitizeForFirestore(payload);
+    await setDoc(doc(db, 'deliveries', deliveryId), clean, { merge: true });
+    setDeliveries((prev) => ({
+      ...prev,
+      [deliveryId]: clean as DeliveryRecord,
+    }));
+    showToast(lang === 'bn' ? 'ডেলিভারি তথ্য সংরক্ষিত হয়েছে' : 'Delivery information saved', 'success');
+  };
+
+  const updateOrderAdminNotes = async (orderId: string, notes: string) => {
+    try {
+      await updateDoc(doc(db, 'orders', orderId), { adminNotes: notes });
+      setOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, adminNotes: notes } : o)));
+      showToast(lang === 'bn' ? 'অ্যাডমিন নোট সংরক্ষিত হয়েছে' : 'Admin note updated', 'success');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `orders/${orderId}`);
+    }
+  };
+
+  const deleteOrder = async (orderId: string) => {
+    try {
+      await deleteDoc(doc(db, 'orders', orderId));
+      setOrders((prev) => prev.filter((o) => o.id !== orderId));
+      showToast(lang === 'bn' ? 'অর্ডার মুছে ফেলা হয়েছে' : 'Order deleted', 'info');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `orders/${orderId}`);
+    }
+  };
+
+  // ----------------------------------------------------
   // 5. TRANSACTIONAL ORDER CREATION & SAFE STOCK DEDUCTION
   // ----------------------------------------------------
   const createOrder = async (
@@ -847,87 +1163,64 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       JSON.stringify(rawOrder, (key, value) => (value === undefined ? null : value))
     ) as Order;
 
-    console.log('Initiating Firestore order transaction for:', orderId, sanitizedOrder);
+    console.log('Initiating Firestore order save for:', orderId, sanitizedOrder);
 
     try {
-      // ATOMIC TRANSACTION:
-      // Mandatory: All transaction.get() reads MUST occur before any transaction writes
-      await runTransaction(db, async (transaction) => {
-        // PHASE 1: READ ALL PRODUCTS FIRST
-        const productReads: {
-          ref: any;
-          exists: boolean;
-          data: Product | null;
-          item: (typeof sanitizedOrder.items)[0];
-        }[] = [];
-
-        for (const item of sanitizedOrder.items) {
-          const productRef = doc(db, 'products', item.productId);
-          const productSnap = await transaction.get(productRef);
-          productReads.push({
-            ref: productRef,
-            exists: productSnap.exists(),
-            data: productSnap.exists() ? (productSnap.data() as Product) : null,
-            item,
-          });
-        }
-
-        // PHASE 2: EXECUTE WRITES AFTER ALL READS
-        for (const { ref, exists, data, item } of productReads) {
-          if (exists && data && Array.isArray(data.variants)) {
-            const updatedVariants = data.variants.map((v) => {
-              if (v.id === item.variantId) {
-                const currentStock = typeof v.stockCount === 'number' ? v.stockCount : 50;
-                const newStock = Math.max(0, currentStock - item.quantity);
-                return {
-                  ...v,
-                  stockCount: newStock,
-                  inStock: newStock > 0,
-                };
-              }
-              return v;
-            });
-
-            const newTotalSold = (data.totalSold || 0) + item.quantity;
-            transaction.update(ref, {
-              variants: updatedVariants,
-              totalSold: newTotalSold,
-            });
-          }
-        }
-
-        // PHASE 3: WRITE THE NEW ORDER DOCUMENT
-        const primaryItem = sanitizedOrder.items[0];
-        const orderDocData: Record<string, any> = {
-          ...sanitizedOrder,
-          orderId: orderId,
-          userId: uid,
-          customerName: sanitizedOrder.customerName,
-          phone: sanitizedOrder.customerPhone,
-          customerPhone: sanitizedOrder.customerPhone,
-          email: sanitizedOrder.customerEmail,
-          customerEmail: sanitizedOrder.customerEmail,
-          productId: primaryItem ? primaryItem.productId : '',
-          productName: primaryItem ? (primaryItem.productTitle || '') : '',
-          quantity: primaryItem ? primaryItem.quantity : 1,
-          price: primaryItem ? primaryItem.unitPrice : 0,
-          total: sanitizedOrder.totalAmount,
-          totalAmount: sanitizedOrder.totalAmount,
-          paymentMethod: sanitizedOrder.paymentMethod,
-          paymentNumber: sanitizedOrder.senderNumber,
-          senderNumber: sanitizedOrder.senderNumber,
-          transactionId: sanitizedOrder.trxId,
-          trxId: sanitizedOrder.trxId,
-          status: 'verifying',
-          createdAt: serverTimestamp(),
-          createdAtIso: new Date().toISOString(),
-        };
-
-        const orderRef = doc(db, 'orders', orderId);
-        transaction.set(orderRef, orderDocData);
-      });
-
+      // Safe Order Creation: Writes exclusively to orders/{orderId} without updating products.
+      // Customers have read-only access to products. Product updates & stock reconciliation
+      // are managed separately by Admins or dedicated backend workflows.
       const primaryItem = sanitizedOrder.items[0];
+      const orderDocData: Record<string, any> = {
+        ...sanitizedOrder,
+        orderId: orderId,
+        userId: uid,
+        customerName: sanitizedOrder.customerName,
+        phone: sanitizedOrder.customerPhone,
+        customerPhone: sanitizedOrder.customerPhone,
+        email: sanitizedOrder.customerEmail,
+        customerEmail: sanitizedOrder.customerEmail,
+        productId: primaryItem ? primaryItem.productId : '',
+        productName: primaryItem ? (primaryItem.productTitle || '') : '',
+        quantity: primaryItem ? primaryItem.quantity : 1,
+        price: primaryItem ? primaryItem.unitPrice : 0,
+        total: sanitizedOrder.totalAmount,
+        totalAmount: sanitizedOrder.totalAmount,
+        paymentMethod: sanitizedOrder.paymentMethod,
+        paymentNumber: sanitizedOrder.senderNumber,
+        senderNumber: sanitizedOrder.senderNumber,
+        transactionId: sanitizedOrder.trxId,
+        trxId: sanitizedOrder.trxId,
+        status: 'verifying',
+        createdAt: serverTimestamp(),
+        createdAtIso: new Date().toISOString(),
+      };
+
+      const orderRef = doc(db, 'orders', orderId);
+      await setDoc(orderRef, orderDocData);
+
+      // Instant local stock feedback in UI without violating products collection rules
+      setProducts((prev) =>
+        prev.map((p) => {
+          const matchedItem = sanitizedOrder.items.find((item) => item.productId === p.id);
+          if (matchedItem) {
+            return {
+              ...p,
+              variants: p.variants.map((v) =>
+                v.id === matchedItem.variantId
+                  ? {
+                      ...v,
+                      stockCount: Math.max(0, (v.stockCount ?? 50) - matchedItem.quantity),
+                      inStock: Math.max(0, (v.stockCount ?? 50) - matchedItem.quantity) > 0,
+                    }
+                  : v
+              ),
+              totalSold: (p.totalSold || 0) + matchedItem.quantity,
+            };
+          }
+          return p;
+        })
+      );
+
       const returnedOrder: Order = {
         ...sanitizedOrder,
         id: orderId,
@@ -1616,6 +1909,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         logoutUser,
         siteSettings,
         updateSiteSettings,
+        allUsers,
+        updateUserByAdmin,
+        deleteUserByAdmin,
+        allAdmins,
+        addAdminUser,
+        removeAdminUser,
+        toggleProductStatus,
+        updateProductStock,
+        updateProductPrice,
+        allDeliveries,
+        saveDeliveryRecord,
+        updateOrderAdminNotes,
+        deleteOrder,
         isCartOpen,
         setIsCartOpen,
         activeProductModal,

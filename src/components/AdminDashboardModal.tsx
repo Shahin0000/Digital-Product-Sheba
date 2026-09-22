@@ -1,48 +1,56 @@
 import React, { useState } from 'react';
 import {
-  X,
-  TrendingUp,
+  LayoutDashboard,
+  Users,
+  ShoppingBag,
   Package,
-  Clock,
-  CheckCircle2,
-  DollarSign,
-  Search,
-  Check,
-  Send,
-  Sliders,
+  Truck,
   Settings,
-  ShieldAlert,
+  ShieldCheck,
+  X,
+  Search,
   Plus,
   Pencil,
   Trash2,
-  Layers,
+  Check,
+  CheckCircle2,
+  Clock,
   AlertTriangle,
-  Tag,
-  Eye,
-  Mail,
-  MessageSquare,
-  UploadCloud,
-  FileCode,
   ExternalLink,
-  Lock,
+  Copy,
+  Save,
   RefreshCw,
-  FileCheck2,
-  ShieldCheck,
+  SlidersHorizontal,
+  Eye,
+  Send,
+  DollarSign,
+  UserPlus,
+  UserMinus,
+  ShieldAlert,
+  Key,
+  FileText,
+  Lock,
   CheckCheck,
+  MessageSquare,
+  Sparkles,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
-import { Order, OrderStatus, Product } from '../types';
+import { Order, OrderStatus, Product, User, AdminUser, DeliveryRecord } from '../types';
 import { AdminProductFormModal } from './AdminProductFormModal';
+
+type AdminTab = 'dashboard' | 'users' | 'products' | 'orders' | 'deliveries' | 'settings' | 'admins';
 
 export const AdminDashboardModal: React.FC = () => {
   const {
     isAdminDashboardOpen,
     setIsAdminDashboardOpen,
+    currentUser,
     orders,
     updateOrderStatus,
     deliverOrder,
     resendNotification,
     deliveries,
+    allDeliveries,
     isDeliveringOrder,
     products,
     categories,
@@ -50,1046 +58,2043 @@ export const AdminDashboardModal: React.FC = () => {
     updateProduct,
     siteSettings,
     updateSiteSettings,
+    allUsers,
+    updateUserByAdmin,
+    deleteUserByAdmin,
+    allAdmins,
+    addAdminUser,
+    removeAdminUser,
+    toggleProductStatus,
+    updateProductStock,
+    updateProductPrice,
+    saveDeliveryRecord,
+    updateOrderAdminNotes,
+    deleteOrder,
     showToast,
     lang,
     t,
   } = useStore();
 
-  const [activeTab, setActiveTab] = useState<'orders' | 'products' | 'settings'>('orders');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [selectedOrderForDelivery, setSelectedOrderForDelivery] = useState<Order | null>(null);
-  const [deliveryMode, setDeliveryMode] = useState<'file' | 'credentials' | 'external'>('file');
-  const [deliveryCredentialsInput, setDeliveryCredentialsInput] = useState('');
-  const [deliveryNotesInput, setDeliveryNotesInput] = useState('');
-  const [deliveryFileName, setDeliveryFileName] = useState('');
-  const [deliveryFileSize, setDeliveryFileSize] = useState<number | undefined>(undefined);
-  const [deliveryFileUrl, setDeliveryFileUrl] = useState('');
-  const [deliveryStoragePath, setDeliveryStoragePath] = useState('');
-  const [resendingType, setResendingType] = useState<{ [orderId: string]: 'email' | 'whatsapp' | null }>({});
+  const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
 
-  // Product Management State
-  const [productSearch, setProductSearch] = useState('');
-  const [productCategoryFilter, setProductCategoryFilter] = useState('all');
+  // Products Modal & Quick Edit
   const [isProductFormOpen, setIsProductFormOpen] = useState(false);
   const [productToEdit, setProductToEdit] = useState<Product | null>(null);
-  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [productSearch, setProductSearch] = useState('');
+  const [productCategoryFilter, setProductCategoryFilter] = useState('all');
+  const [quickEditVariant, setQuickEditVariant] = useState<{
+    productId: string;
+    variantId: string;
+    regularPrice: number;
+    salePrice: number;
+    stockCount: number;
+  } | null>(null);
 
-  // Settings form states
-  const [bkashNum, setBkashNum] = useState(siteSettings.bkashNumber);
-  const [nagadNum, setNagadNum] = useState(siteSettings.nagadNumber);
-  const [rocketNum, setRocketNum] = useState(siteSettings.rocketNumber);
-  const [announcementBn, setAnnouncementBn] = useState(siteSettings.announcementBn);
-  const [announcementEn, setAnnouncementEn] = useState(siteSettings.announcementEn);
+  // Users Filter & Promotion
+  const [userSearch, setUserSearch] = useState('');
+  const [isAddAdminModalOpen, setIsAddAdminModalOpen] = useState(false);
+  const [newAdminUserId, setNewAdminUserId] = useState('');
+  const [newAdminName, setNewAdminName] = useState('');
+  const [newAdminEmail, setNewAdminEmail] = useState('');
 
-  if (!isAdminDashboardOpen) return null;
+  // Orders Filters & Modals
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
+  const [orderSearch, setOrderSearch] = useState('');
+  const [selectedOrderForView, setSelectedOrderForView] = useState<Order | null>(null);
+  const [adminNoteInput, setAdminNoteInput] = useState('');
 
-  // Financial calculations
-  const totalRevenue = orders.reduce((sum, o) => sum + o.totalAmount, 0);
-  const totalOrders = orders.length;
-  const pendingCount = orders.filter((o) => o.status === 'verifying' || o.status === 'pending').length;
-  const completedCount = orders.filter((o) => o.status === 'completed').length;
+  // Delivery Management
+  const [deliverySearch, setDeliverySearch] = useState('');
+  const [selectedOrderForDelivery, setSelectedOrderForDelivery] = useState<Order | null>(null);
+  const [deliveryMode, setDeliveryMode] = useState<'credentials' | 'file' | 'license_key' | 'link'>('credentials');
+  const [deliveryContentInput, setDeliveryContentInput] = useState('');
+  const [deliveryNotesInput, setDeliveryNotesInput] = useState('');
+  const [viewDeliveryContentModal, setViewDeliveryContentModal] = useState<DeliveryRecord | null>(null);
 
-  const filteredOrders = orders.filter((o) => {
-    if (statusFilter === 'all') return true;
-    return o.status === statusFilter;
+  // Global Settings Form State
+  const [settingsForm, setSettingsForm] = useState({
+    siteName: siteSettings.siteName || 'Digital Product Sheba',
+    supportPhone: siteSettings.supportPhone || '+880 1700-000000',
+    supportEmail: siteSettings.supportEmail || 'support@digitalproductsheba.com',
+    whatsappSupportNumber: siteSettings.whatsappSupportNumber || '+8801700000000',
+    bkashNumber: siteSettings.bkashNumber || '01712345678',
+    nagadNumber: siteSettings.nagadNumber || '01812345678',
+    rocketNumber: siteSettings.rocketNumber || '01912345678',
+    deliveryNoticeBn: siteSettings.deliveryNoticeBn || 'অর্ডার অনুমোদনের ৫-১৫ মিনিটের মধ্যে ডিজিটাল ডেলিভারি পাবেন।',
+    deliveryNoticeEn: siteSettings.deliveryNoticeEn || 'Instant digital delivery within 5-15 minutes of payment verification.',
+    maintenanceMode: siteSettings.maintenanceMode || false,
   });
 
-  // Filter products
+  // Strict Access Guard: Only admin users can render Admin Panel
+  if (!isAdminDashboardOpen || !currentUser || currentUser.role !== 'admin') {
+    return null;
+  }
+
+  // --- STATS CALCULATION ---
+  const totalUsers = allUsers.length;
+  const totalProducts = products.length;
+  const totalOrders = orders.length;
+  const pendingOrders = orders.filter((o) => o.status === 'pending' || o.status === 'verifying').length;
+  const processingOrders = orders.filter((o) => o.status === 'processing').length;
+  const completedOrders = orders.filter((o) => o.status === 'completed').length;
+  const totalDeliveries = allDeliveries.length;
+  const totalSales = orders
+    .filter((o) => o.status === 'completed')
+    .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
+
+  // Recent 8 Orders
+  const recentOrders = [...orders]
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+    .slice(0, 8);
+
+  // Filtered Users
+  const filteredUsers = allUsers.filter((u) => {
+    const q = userSearch.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      (u.name && u.name.toLowerCase().includes(q)) ||
+      (u.email && u.email.toLowerCase().includes(q)) ||
+      (u.phone && u.phone.includes(q)) ||
+      u.id.toLowerCase().includes(q)
+    );
+  });
+
+  // Filtered Products
   const filteredProducts = products.filter((prod) => {
     const matchesCategory =
       productCategoryFilter === 'all' || prod.categoryId === productCategoryFilter;
-    const matchesQuery =
-      !productSearch.trim() ||
-      prod.titleEn.toLowerCase().includes(productSearch.toLowerCase()) ||
-      prod.titleBn.toLowerCase().includes(productSearch.toLowerCase());
-    return matchesCategory && matchesQuery;
+    const q = productSearch.toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      prod.titleEn.toLowerCase().includes(q) ||
+      prod.titleBn.toLowerCase().includes(q) ||
+      prod.id.toLowerCase().includes(q);
+    return matchesCategory && matchesSearch;
   });
 
-  const handleOpenDeliverModal = (order: Order) => {
+  // Filtered Orders
+  const filteredOrders = orders.filter((o) => {
+    const matchesStatus =
+      orderStatusFilter === 'all'
+        ? true
+        : orderStatusFilter === 'pending'
+        ? o.status === 'pending' || o.status === 'verifying'
+        : o.status === orderStatusFilter;
+
+    const q = orderSearch.toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      (o.orderId && o.orderId.toLowerCase().includes(q)) ||
+      o.id.toLowerCase().includes(q) ||
+      (o.customerPhone && o.customerPhone.includes(q)) ||
+      (o.trxId && o.trxId.toLowerCase().includes(q)) ||
+      (o.customerName && o.customerName.toLowerCase().includes(q)) ||
+      (o.customerEmail && o.customerEmail.toLowerCase().includes(q));
+
+    return matchesStatus && matchesSearch;
+  });
+
+  // Filtered Deliveries
+  const filteredDeliveries = allDeliveries.filter((d) => {
+    const q = deliverySearch.toLowerCase().trim();
+    if (!q) return true;
+    return (
+      (d.orderId && d.orderId.toLowerCase().includes(q)) ||
+      (d.userId && d.userId.toLowerCase().includes(q)) ||
+      (d.id && d.id.toLowerCase().includes(q)) ||
+      (d.productTitle && d.productTitle.toLowerCase().includes(q))
+    );
+  });
+
+  // Handlers
+  const handleOpenDeliveryModal = (order: Order) => {
     setSelectedOrderForDelivery(order);
-    const primaryItem = order.items[0];
-    const associatedProduct = products.find((p) => p.id === primaryItem?.productId);
-    const existingDelivery = deliveries[order.id];
-
-    if (associatedProduct?.downloadAccessType === 'credentials') {
-      setDeliveryMode('credentials');
-    } else if (associatedProduct?.downloadAccessType === 'external_link') {
-      setDeliveryMode('external');
+    const existing = deliveries[order.id];
+    if (existing) {
+      setDeliveryMode(
+        (existing.deliveryType as 'credentials' | 'file' | 'license_key' | 'link') || 'credentials'
+      );
+      setDeliveryContentInput(
+        existing.credentials || existing.downloadUrl || existing.licenseKey || ''
+      );
+      setDeliveryNotesInput(existing.adminNotes || '');
     } else {
-      setDeliveryMode('file');
+      const prod = products.find((p) => p.id === order.items[0]?.productId);
+      if (prod?.downloadAccessType === 'credentials') setDeliveryMode('credentials');
+      else if (prod?.downloadAccessType === 'external_link') setDeliveryMode('link');
+      else setDeliveryMode('credentials');
+      setDeliveryContentInput('');
+      setDeliveryNotesInput('');
     }
-
-    const initialKey =
-      existingDelivery?.credentialsOrKey ||
-      order.digitalDeliveries?.[0]?.credentialsOrKey ||
-      associatedProduct?.variants?.[0]?.sampleKey ||
-      '';
-    setDeliveryCredentialsInput(initialKey);
-
-    setDeliveryFileName(
-      existingDelivery?.fileName ||
-      associatedProduct?.digitalFileName ||
-      ''
-    );
-    setDeliveryFileSize(
-      existingDelivery?.fileSize ??
-      associatedProduct?.digitalFileSize
-    );
-    setDeliveryStoragePath(
-      existingDelivery?.storagePath ||
-      associatedProduct?.digitalFileStoragePath ||
-      ''
-    );
-    setDeliveryFileUrl(
-      existingDelivery?.downloadUrl ||
-      associatedProduct?.digitalFileUrl ||
-      associatedProduct?.externalAccessUrl ||
-      ''
-    );
-    setDeliveryNotesInput('Thank you for ordering with Digital Product Sheba. Your digital purchase is ready.');
   };
 
-  const handleVerifyPayment = async (orderId: string) => {
-    await updateOrderStatus(orderId, 'processing', undefined, 'Payment manually verified by Admin');
-    showToast(
-      lang === 'bn' ? 'পেমেন্ট ভেরিফাই হয়েছে, অর্ডার প্রসেসিং এ আছে' : 'Payment verified. Order marked as Processing.',
-      'success'
-    );
-  };
-
-  const handleConfirmDelivery = async () => {
+  const handleSaveDeliverySubmit = async () => {
     if (!selectedOrderForDelivery) return;
+    if (!deliveryContentInput.trim()) {
+      showToast(lang === 'bn' ? 'ডেলিভারি কনটেন্ট প্রদান করুন' : 'Please provide delivery content', 'error');
+      return;
+    }
 
-    const isExternal = deliveryMode === 'external';
-    await deliverOrder(selectedOrderForDelivery.id, {
-      deliveryMethod: isExternal ? 'external_link' : deliveryMode,
-      externalAccessUrl: isExternal ? (deliveryFileUrl.trim() || undefined) : undefined,
-      credentialsOrKey: deliveryCredentialsInput.trim() || undefined,
-      notes: deliveryNotesInput.trim() || undefined,
-      fileName: !isExternal ? (deliveryFileName.trim() || undefined) : undefined,
-      fileSize: !isExternal ? deliveryFileSize : undefined,
-      fileUrl: deliveryFileUrl.trim() || undefined,
-      storagePath: !isExternal ? (deliveryStoragePath.trim() || undefined) : undefined,
-    });
-
-    setSelectedOrderForDelivery(null);
-  };
-
-  const handleResend = async (orderId: string, type: 'email' | 'whatsapp') => {
-    setResendingType((prev) => ({ ...prev, [orderId]: type }));
     try {
-      await resendNotification(orderId, type);
-    } finally {
-      setResendingType((prev) => ({ ...prev, [orderId]: null }));
+      const primaryItem = selectedOrderForDelivery.items[0];
+      await deliverOrder(
+        selectedOrderForDelivery.id,
+        deliveryMode === 'file'
+          ? {
+              fileName: `${primaryItem?.productTitle || 'Digital-Item'}.zip`,
+              fileUrl: deliveryContentInput.trim(),
+              notes: deliveryNotesInput,
+            }
+          : {
+              credentials: deliveryContentInput.trim(),
+              notes: deliveryNotesInput,
+            }
+      );
+
+      await saveDeliveryRecord({
+        orderId: selectedOrderForDelivery.id,
+        userId: selectedOrderForDelivery.userId,
+        productId: primaryItem?.productId || '',
+        productTitle: primaryItem?.productTitle || 'Digital Product',
+        deliveryType: deliveryMode,
+        credentials: deliveryMode === 'credentials' ? deliveryContentInput.trim() : undefined,
+        downloadUrl: deliveryMode === 'link' || deliveryMode === 'file' ? deliveryContentInput.trim() : undefined,
+        licenseKey: deliveryMode === 'license_key' ? deliveryContentInput.trim() : undefined,
+        adminNotes: deliveryNotesInput.trim(),
+        status: 'delivered',
+        deliveredAt: new Date().toISOString(),
+      });
+
+      setSelectedOrderForDelivery(null);
+      showToast(
+        lang === 'bn'
+          ? `অর্ডার #${selectedOrderForDelivery.orderId || selectedOrderForDelivery.id} সফলভাবে ডেলিভারি করা হয়েছে!`
+          : `Order #${selectedOrderForDelivery.orderId || selectedOrderForDelivery.id} delivered successfully!`,
+        'success'
+      );
+    } catch (err) {
+      console.error('Error delivering order:', err);
+      showToast(lang === 'bn' ? 'ডেলিভারি ব্যর্থ হয়েছে' : 'Delivery failed', 'error');
     }
   };
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    updateSiteSettings({
-      bkashNumber: bkashNum,
-      nagadNumber: nagadNum,
-      rocketNumber: rocketNum,
-      announcementBn,
-      announcementEn,
-    });
-  };
-
-  const handleAddNewProduct = () => {
-    setProductToEdit(null);
-    setIsProductFormOpen(true);
-  };
-
-  const handleEditProduct = (prod: Product) => {
-    setProductToEdit(prod);
-    setIsProductFormOpen(true);
-  };
-
-  const handleConfirmDeleteProduct = () => {
-    if (productToDelete) {
-      deleteProduct(productToDelete.id);
-      setProductToDelete(null);
+    try {
+      await updateSiteSettings(settingsForm);
+      showToast(
+        lang === 'bn' ? 'সেটিংস সফলভাবে সংরক্ষিত হয়েছে!' : 'Settings updated successfully!',
+        'success'
+      );
+    } catch (err) {
+      console.error(err);
+      showToast(lang === 'bn' ? 'সেটিংস সংরক্ষণে ব্যর্থ' : 'Failed to save settings', 'error');
     }
+  };
+
+  const handleCopyText = (text: string) => {
+    navigator.clipboard.writeText(text);
+    showToast(lang === 'bn' ? 'কপি করা হয়েছে!' : 'Copied to clipboard!', 'success');
   };
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in">
-      <div
-        className="bg-white rounded-3xl max-w-5xl w-full overflow-hidden shadow-2xl border border-gray-100 relative my-6 flex flex-col max-h-[92vh]"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="p-4 sm:p-6 border-b border-gray-100 flex items-center justify-between bg-slate-900 text-white shrink-0">
+    <div
+      id="admin-dashboard-modal"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-md animate-fadeIn"
+    >
+      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-7xl h-[94vh] flex flex-col shadow-2xl overflow-hidden text-slate-100">
+        {/* HEADER BAR */}
+        <header className="px-6 py-4 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-500 text-slate-950 flex items-center justify-center font-black">
-              <ShieldAlert className="w-6 h-6" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
+              <ShieldCheck className="w-6 h-6" />
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-black tracking-tight">{t.adminOverview}</h2>
-              <p className="text-xs text-gray-400">
-                {lang === 'bn'
-                  ? 'প্রোডাক্ট যুক্ত/এডিট, অর্ডার যাচাই ও কন্ট্রোল প্যানেল'
-                  : 'Add/Edit/Delete products, verify orders & store control'}
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold text-white tracking-tight">
+                  {lang === 'bn' ? 'অ্যাডমিন কন্ট্রোল প্যানেল' : 'Admin Control Panel'}
+                </h1>
+                <span className="px-2 py-0.5 text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-full">
+                  Verified Admin
+                </span>
+              </div>
+              <p className="text-xs text-slate-400">
+                {currentUser.name} • {currentUser.email}
               </p>
             </div>
           </div>
 
-          <button
-            onClick={() => setIsAdminDashboardOpen(false)}
-            className="p-1.5 text-gray-400 hover:text-white rounded-lg cursor-pointer transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* 4 Metric Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 sm:p-6 bg-gray-50 border-b border-gray-100 shrink-0">
-          <div className="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-xs">
-            <span className="text-[10px] text-gray-400 font-bold uppercase block">
-              {t.totalRevenue}
-            </span>
-            <span className="text-lg sm:text-xl font-black text-emerald-700">৳{totalRevenue}</span>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsAdminDashboardOpen(false)}
+              className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors cursor-pointer"
+              title="Close Admin Panel"
+            >
+              <X className="w-5 h-5" />
+            </button>
           </div>
+        </header>
 
-          <div className="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-xs">
-            <span className="text-[10px] text-gray-400 font-bold uppercase block">
-              {t.totalOrders}
-            </span>
-            <span className="text-lg sm:text-xl font-black text-gray-900">{totalOrders}</span>
-          </div>
+        {/* MAIN BODY: SIDEBAR + CONTENT */}
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+          {/* SIDEBAR */}
+          <aside className="w-full md:w-64 bg-slate-950/60 border-b md:border-b-0 md:border-r border-slate-800/80 p-3 flex md:flex-col gap-1.5 shrink-0 overflow-x-auto md:overflow-y-auto">
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === 'dashboard'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <LayoutDashboard className="w-4 h-4 shrink-0" />
+              <span>📊 Dashboard</span>
+            </button>
 
-          <div className="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-xs">
-            <span className="text-[10px] text-gray-400 font-bold uppercase block">
-              {t.pendingVerification}
-            </span>
-            <span className="text-lg sm:text-xl font-black text-amber-600">{pendingCount}</span>
-          </div>
+            <button
+              onClick={() => setActiveTab('users')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === 'users'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <Users className="w-4 h-4 shrink-0" />
+              <span>👥 Users</span>
+              <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                {allUsers.length}
+              </span>
+            </button>
 
-          <div className="bg-white p-3.5 rounded-2xl border border-gray-200 shadow-xs">
-            <span className="text-[10px] text-gray-400 font-bold uppercase block">
-              {lang === 'bn' ? 'মোট প্রোডাক্ট' : 'Total Products'}
-            </span>
-            <span className="text-lg sm:text-xl font-black text-emerald-600">{products.length}</span>
-          </div>
-        </div>
+            <button
+              onClick={() => setActiveTab('products')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === 'products'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <ShoppingBag className="w-4 h-4 shrink-0" />
+              <span>🛍️ Products</span>
+              <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                {products.length}
+              </span>
+            </button>
 
-        {/* Sub-tabs */}
-        <div className="flex border-b border-gray-200 bg-white px-4 sm:px-6 gap-2 shrink-0">
-          <button
-            onClick={() => setActiveTab('orders')}
-            className={`py-3 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 cursor-pointer transition-colors ${
-              activeTab === 'orders'
-                ? 'border-emerald-600 text-emerald-700'
-                : 'border-transparent text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            <Package className="w-4 h-4" />
-            <span>{t.manageOrders}</span>
-            <span className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded-full">
-              {orders.length}
-            </span>
-          </button>
+            <button
+              onClick={() => setActiveTab('orders')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === 'orders'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <Package className="w-4 h-4 shrink-0" />
+              <span>📦 Orders</span>
+              {pendingOrders > 0 && (
+                <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30">
+                  {pendingOrders}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={() => setActiveTab('products')}
-            className={`py-3 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 cursor-pointer transition-colors ${
-              activeTab === 'products'
-                ? 'border-emerald-600 text-emerald-700'
-                : 'border-transparent text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>{t.manageProducts}</span>
-            <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded-full font-extrabold">
-              {products.length}
-            </span>
-          </button>
+            <button
+              onClick={() => setActiveTab('deliveries')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === 'deliveries'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <Truck className="w-4 h-4 shrink-0" />
+              <span>🚚 Deliveries</span>
+              <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                {allDeliveries.length}
+              </span>
+            </button>
 
-          <button
-            onClick={() => setActiveTab('settings')}
-            className={`py-3 px-3 text-xs font-bold border-b-2 flex items-center gap-1.5 cursor-pointer transition-colors ${
-              activeTab === 'settings'
-                ? 'border-emerald-600 text-emerald-700'
-                : 'border-transparent text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            <Settings className="w-4 h-4" />
-            <span>{t.siteSettings}</span>
-          </button>
-        </div>
+            <button
+              onClick={() => setActiveTab('settings')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === 'settings'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <Settings className="w-4 h-4 shrink-0" />
+              <span>⚙️ Settings</span>
+            </button>
 
-        {/* Tab Content */}
-        <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-4">
-          {/* TAB 1: ORDERS */}
-          {activeTab === 'orders' && (
-            <div className="space-y-4">
-              {/* Filter Pills */}
-              <div className="flex gap-2 text-xs font-bold overflow-x-auto pb-1">
-                {['all', 'verifying', 'processing', 'delivered', 'completed', 'cancelled'].map((st) => (
-                  <button
-                    key={st}
-                    onClick={() => setStatusFilter(st)}
-                    className={`px-3 py-1.5 rounded-xl capitalize cursor-pointer transition-all ${
-                      statusFilter === st
-                        ? 'bg-emerald-600 text-white shadow-xs'
-                        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                    }`}
-                  >
-                    {st}
-                  </button>
-                ))}
-              </div>
+            <button
+              onClick={() => setActiveTab('admins')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+                activeTab === 'admins'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <ShieldCheck className="w-4 h-4 shrink-0" />
+              <span>🔐 Admins</span>
+              <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                {allAdmins.length}
+              </span>
+            </button>
+          </aside>
 
-              {/* Order Table / Cards */}
-              <div className="space-y-3">
-                {filteredOrders.length === 0 ? (
-                  <p className="text-center py-8 text-xs text-gray-400 font-bold">
-                    No orders in this category
+          {/* MAIN CONTENT AREA */}
+          <main className="flex-1 p-4 sm:p-6 overflow-y-auto bg-slate-900/50">
+            {/* ---------------------------------------------------- */}
+            {/* TAB 1: DASHBOARD */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'dashboard' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-bold text-white tracking-tight">
+                    {lang === 'bn' ? 'ওভারভিউ ও অ্যানালিটিক্স' : 'Dashboard Overview'}
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Real-time operational summary from Firebase Firestore.
                   </p>
-                ) : (
-                  filteredOrders.map((order) => {
-                    const delivery = deliveries[order.id];
-                    const isDelivered = order.status === 'delivered' || order.status === 'completed';
+                </div>
 
-                    return (
-                      <div
-                        key={order.id}
-                        className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3 text-xs"
-                      >
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200/70 pb-2.5">
-                          <div className="flex items-center gap-2">
-                            <span className="font-black text-sm font-mono text-gray-900">
-                              #{order.id}
-                            </span>
-                            <span className="text-gray-400 text-[11px]">
-                              {new Date(order.createdAt).toLocaleString()}
-                            </span>
-                          </div>
+                {/* METRICS GRID (Exact 8 metrics) */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                  {/* Total Users */}
+                  <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 flex flex-col justify-between">
+                    <span className="text-xs font-medium text-slate-400">Total Users</span>
+                    <div className="text-2xl font-black text-white mt-2 font-mono">
+                      {totalUsers}
+                    </div>
+                    <span className="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
+                      <Users className="w-3 h-3" /> Registered accounts
+                    </span>
+                  </div>
 
-                          <div className="flex items-center gap-2">
-                            <span
-                              className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold capitalize ${
-                                isDelivered
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : order.status === 'processing'
-                                  ? 'bg-blue-100 text-blue-800'
-                                  : order.status === 'verifying'
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : order.status === 'cancelled'
-                                  ? 'bg-rose-100 text-rose-800'
-                                  : 'bg-gray-200 text-gray-800'
-                              }`}
-                            >
-                              {order.status}
-                            </span>
-                          </div>
-                        </div>
+                  {/* Total Products */}
+                  <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 flex flex-col justify-between">
+                    <span className="text-xs font-medium text-slate-400">Total Products</span>
+                    <div className="text-2xl font-black text-white mt-2 font-mono">
+                      {totalProducts}
+                    </div>
+                    <span className="text-[11px] text-teal-400 mt-1 flex items-center gap-1">
+                      <ShoppingBag className="w-3 h-3" /> Catalog items
+                    </span>
+                  </div>
 
-                        {/* Items */}
-                        <div className="space-y-1">
-                          {order.items.map((i, idx) => (
-                            <div key={idx} className="flex justify-between text-gray-700">
-                              <span className="font-medium">
-                                {i.productTitle} ({i.variantName}) × {i.quantity}
-                              </span>
-                              <span className="font-bold">৳{i.unitPrice * i.quantity}</span>
-                            </div>
-                          ))}
-                        </div>
+                  {/* Total Orders */}
+                  <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 flex flex-col justify-between">
+                    <span className="text-xs font-medium text-slate-400">Total Orders</span>
+                    <div className="text-2xl font-black text-white mt-2 font-mono">
+                      {totalOrders}
+                    </div>
+                    <span className="text-[11px] text-cyan-400 mt-1 flex items-center gap-1">
+                      <Package className="w-3 h-3" /> Lifetime submissions
+                    </span>
+                  </div>
 
-                        {/* Customer, Payment and Trx Details */}
-                        <div className="bg-white p-3 rounded-xl border border-gray-200 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                          <div>
-                            <span className="text-gray-400 block font-bold uppercase">Customer</span>
-                            <span className="font-bold text-gray-800">{order.customerName}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400 block font-bold uppercase">Contact</span>
-                            <span className="font-mono text-gray-800 block">{order.customerPhone}</span>
-                            <span className="text-[10px] text-gray-500 truncate block">{order.customerEmail}</span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400 block font-bold uppercase">Payment</span>
-                            <span className="font-bold uppercase text-emerald-700 block">
-                              {order.paymentMethod}
-                            </span>
-                            <span className="text-[10px] text-gray-500 font-mono">
-                              Sender: {order.senderNumber}
-                            </span>
-                          </div>
-                          <div>
-                            <span className="text-gray-400 block font-bold uppercase">Transaction ID</span>
-                            <span className="font-mono font-bold text-rose-600 select-all">
-                              {order.trxId}
-                            </span>
-                          </div>
-                        </div>
+                  {/* Pending Orders */}
+                  <div className="bg-slate-800/60 border border-amber-500/30 rounded-xl p-4 flex flex-col justify-between bg-amber-500/5">
+                    <span className="text-xs font-medium text-amber-300">Pending Orders</span>
+                    <div className="text-2xl font-black text-amber-400 mt-2 font-mono">
+                      {pendingOrders}
+                    </div>
+                    <span className="text-[11px] text-amber-300/80 mt-1 flex items-center gap-1">
+                      <Clock className="w-3 h-3" /> Needs verification
+                    </span>
+                  </div>
 
-                        {/* Delivery & Notification Status Strip if Delivered */}
-                        {isDelivered && (
-                          <div className="bg-emerald-50/70 p-3 rounded-xl border border-emerald-200 text-[11px] space-y-2">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="flex items-center gap-2">
-                                <FileCheck2 className="w-4 h-4 text-emerald-700 shrink-0" />
-                                <span className="font-extrabold text-emerald-950">
-                                  Digital Delivery Active
+                  {/* Processing Orders */}
+                  <div className="bg-slate-800/60 border border-blue-500/30 rounded-xl p-4 flex flex-col justify-between bg-blue-500/5">
+                    <span className="text-xs font-medium text-blue-300">Processing Orders</span>
+                    <div className="text-2xl font-black text-blue-400 mt-2 font-mono">
+                      {processingOrders}
+                    </div>
+                    <span className="text-[11px] text-blue-300/80 mt-1 flex items-center gap-1">
+                      <RefreshCw className="w-3 h-3" /> In fulfillment
+                    </span>
+                  </div>
+
+                  {/* Completed Orders */}
+                  <div className="bg-slate-800/60 border border-emerald-500/30 rounded-xl p-4 flex flex-col justify-between bg-emerald-500/5">
+                    <span className="text-xs font-medium text-emerald-300">Completed Orders</span>
+                    <div className="text-2xl font-black text-emerald-400 mt-2 font-mono">
+                      {completedOrders}
+                    </div>
+                    <span className="text-[11px] text-emerald-300/80 mt-1 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Fully fulfilled
+                    </span>
+                  </div>
+
+                  {/* Total Deliveries */}
+                  <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4 flex flex-col justify-between">
+                    <span className="text-xs font-medium text-slate-400">Total Deliveries</span>
+                    <div className="text-2xl font-black text-white mt-2 font-mono">
+                      {totalDeliveries}
+                    </div>
+                    <span className="text-[11px] text-purple-400 mt-1 flex items-center gap-1">
+                      <Truck className="w-3 h-3" /> Dispatched items
+                    </span>
+                  </div>
+
+                  {/* Total Sales */}
+                  <div className="bg-slate-800/60 border border-emerald-600/40 rounded-xl p-4 flex flex-col justify-between bg-emerald-500/10">
+                    <span className="text-xs font-semibold text-emerald-300">Total Sales</span>
+                    <div className="text-2xl font-black text-emerald-400 mt-2 font-mono">
+                      ৳{totalSales.toLocaleString()}
+                    </div>
+                    <span className="text-[11px] text-emerald-300/80 mt-1 flex items-center gap-1">
+                      <DollarSign className="w-3 h-3" /> Verified revenue
+                    </span>
+                  </div>
+                </div>
+
+                {/* RECENT ORDERS TABLE */}
+                <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl overflow-hidden">
+                  <div className="px-5 py-3.5 border-b border-slate-700/60 flex items-center justify-between">
+                    <h3 className="font-semibold text-white text-sm flex items-center gap-2">
+                      <Package className="w-4 h-4 text-emerald-400" />
+                      Recent Orders
+                    </h3>
+                    <button
+                      onClick={() => setActiveTab('orders')}
+                      className="text-xs text-emerald-400 hover:text-emerald-300 font-medium cursor-pointer"
+                    >
+                      View all orders →
+                    </button>
+                  </div>
+
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-300">
+                      <thead className="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-700/60">
+                        <tr>
+                          <th className="px-4 py-3">Order ID</th>
+                          <th className="px-4 py-3">Customer</th>
+                          <th className="px-4 py-3">Payment & TrxID</th>
+                          <th className="px-4 py-3">Amount</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3">Date</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700/40">
+                        {recentOrders.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                              No orders found in Firestore yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          recentOrders.map((order) => (
+                            <tr key={order.id} className="hover:bg-slate-800/40 transition-colors">
+                              <td className="px-4 py-3 font-mono font-bold text-white">
+                                #{order.orderId || order.id.substring(0, 8)}
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="font-medium text-slate-200">
+                                  {order.customerName}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  {order.customerPhone}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="uppercase font-semibold text-emerald-400">
+                                  {order.paymentMethod}
                                 </span>
-                                {delivery?.fileName && (
-                                  <span className="text-slate-600 bg-white px-2 py-0.5 rounded border border-emerald-200 text-[10px] font-mono">
-                                    File: {delivery.fileName}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="text-emerald-800 font-bold">
-                                Downloads: {delivery?.downloadCount || 0}
-                              </span>
-                            </div>
-
-                            {/* Notifications Row */}
-                            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-emerald-200/60">
-                              <div className="flex items-center gap-3">
-                                {/* Email Status */}
-                                <div className="flex items-center gap-1.5">
-                                  <Mail className="w-3.5 h-3.5 text-slate-500" />
-                                  <span className="text-[10px] text-slate-600 font-bold">Email:</span>
-                                  <span
-                                    className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${
-                                      delivery?.emailStatus === 'sent'
-                                        ? 'bg-emerald-200 text-emerald-900'
-                                        : delivery?.emailStatus === 'failed'
-                                        ? 'bg-rose-200 text-rose-900'
-                                        : 'bg-amber-200 text-amber-900'
-                                    }`}
-                                  >
-                                    {delivery?.emailStatus || 'pending'}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleResend(order.id, 'email')}
-                                    disabled={resendingType[order.id] === 'email'}
-                                    className="text-[10px] text-emerald-700 hover:underline font-bold cursor-pointer ml-0.5"
-                                  >
-                                    {resendingType[order.id] === 'email' ? 'Sending...' : 'Resend'}
-                                  </button>
+                                <div className="font-mono text-[11px] text-slate-400">
+                                  {order.trxId || 'N/A'}
                                 </div>
-
-                                {/* WhatsApp Status */}
-                                <div className="flex items-center gap-1.5">
-                                  <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span className="text-[10px] text-slate-600 font-bold">WhatsApp:</span>
-                                  <span
-                                    className={`text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${
-                                      delivery?.whatsappStatus === 'sent'
-                                        ? 'bg-emerald-200 text-emerald-900'
-                                        : delivery?.whatsappStatus === 'failed'
-                                        ? 'bg-rose-200 text-rose-900'
-                                        : 'bg-amber-200 text-amber-900'
-                                    }`}
-                                  >
-                                    {delivery?.whatsappStatus || 'pending'}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleResend(order.id, 'whatsapp')}
-                                    disabled={resendingType[order.id] === 'whatsapp'}
-                                    className="text-[10px] text-emerald-700 hover:underline font-bold cursor-pointer ml-0.5"
-                                  >
-                                    {resendingType[order.id] === 'whatsapp' ? 'Sending...' : 'Resend'}
-                                  </button>
-                                </div>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => handleOpenDeliverModal(order)}
-                                className="text-[10px] font-bold text-slate-700 bg-white hover:bg-slate-100 px-2.5 py-1 rounded-lg border border-slate-300 cursor-pointer"
-                              >
-                                Edit Delivery / Redeliver
-                              </button>
-                            </div>
-                          </div>
+                              </td>
+                              <td className="px-4 py-3 font-bold text-white font-mono">
+                                ৳{order.totalAmount}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span
+                                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase ${
+                                    order.status === 'completed'
+                                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                                      : order.status === 'processing'
+                                      ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30'
+                                      : order.status === 'cancelled'
+                                      ? 'bg-red-500/10 text-red-400 border border-red-500/30'
+                                      : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
+                                  }`}
+                                >
+                                  {order.status}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-slate-400 text-[11px]">
+                                {new Date(order.createdAt).toLocaleDateString()}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  onClick={() => handleOpenDeliveryModal(order)}
+                                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium cursor-pointer transition-colors"
+                                >
+                                  Deliver
+                                </button>
+                              </td>
+                            </tr>
+                          ))
                         )}
-
-                        {/* Order Actions Toolbar */}
-                        <div className="flex flex-wrap items-center justify-end gap-2 pt-1 border-t border-gray-200">
-                          {order.status === 'verifying' && (
-                            <button
-                              type="button"
-                              onClick={() => handleVerifyPayment(order.id)}
-                              className="px-3 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold rounded-xl cursor-pointer flex items-center gap-1 transition-colors"
-                            >
-                              <CheckCheck className="w-3.5 h-3.5" />
-                              <span>Verify Payment</span>
-                            </button>
-                          )}
-
-                          {!isDelivered && (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenDeliverModal(order)}
-                              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl cursor-pointer flex items-center gap-1.5 shadow-xs transition-colors"
-                            >
-                              <UploadCloud className="w-3.5 h-3.5" />
-                              <span>Deliver Digital Product</span>
-                            </button>
-                          )}
-
-                          {order.status !== 'cancelled' && !isDelivered && (
-                            <button
-                              type="button"
-                              onClick={() =>
-                                updateOrderStatus(order.id, 'cancelled', undefined, 'Order cancelled by Admin')
-                              }
-                              className="px-3 py-1.5 bg-gray-100 hover:bg-rose-50 text-gray-600 hover:text-rose-600 font-bold rounded-xl cursor-pointer transition-colors"
-                            >
-                              Cancel
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* TAB 2: PRODUCTS (ADD, EDIT, DELETE) */}
-          {activeTab === 'products' && (
-            <div className="space-y-4">
-              {/* Product Action Strip */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-gray-50 p-3.5 rounded-2xl border border-gray-200">
-                <div className="flex flex-1 items-center gap-2">
-                  <div className="relative flex-1 max-w-sm">
+            {/* ---------------------------------------------------- */}
+            {/* TAB 2: USERS */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'users' && (
+              <div className="space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold text-white tracking-tight">
+                      {lang === 'bn' ? 'ব্যবহারকারী তালিকা' : 'User Accounts'}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Manage registered customers, roles, and administrative access.
+                    </p>
+                  </div>
+
+                  <div className="relative w-full sm:w-72">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                     <input
                       type="text"
+                      placeholder="Search name, email, phone, ID..."
+                      value={userSearch}
+                      onChange={(e) => setUserSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-800/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-300">
+                      <thead className="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-700/60">
+                        <tr>
+                          <th className="px-4 py-3">User</th>
+                          <th className="px-4 py-3">Contact</th>
+                          <th className="px-4 py-3">Role</th>
+                          <th className="px-4 py-3">Joined Date</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700/40">
+                        {filteredUsers.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                              No users match your criteria.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredUsers.map((user) => (
+                            <tr key={user.id} className="hover:bg-slate-800/40 transition-colors">
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-white">{user.name}</div>
+                                <div className="text-[11px] font-mono text-slate-500 truncate max-w-[200px]">
+                                  {user.id}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="text-slate-200">{user.email || 'No email'}</div>
+                                <div className="text-[11px] text-slate-400">
+                                  {user.phone || 'No phone'}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <select
+                                  value={user.role}
+                                  onChange={(e) =>
+                                    updateUserByAdmin(user.id, {
+                                      role: e.target.value as 'admin' | 'customer',
+                                    })
+                                  }
+                                  disabled={user.id === currentUser.id}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold uppercase border cursor-pointer ${
+                                    user.role === 'admin'
+                                      ? 'bg-purple-500/10 text-purple-300 border-purple-500/30'
+                                      : 'bg-slate-800 text-slate-300 border-slate-700'
+                                  }`}
+                                >
+                                  <option value="customer" className="bg-slate-900 text-slate-200">
+                                    Customer
+                                  </option>
+                                  <option value="admin" className="bg-slate-900 text-purple-300 font-bold">
+                                    Admin
+                                  </option>
+                                </select>
+                              </td>
+                              <td className="px-4 py-3 text-slate-400 text-[11px]">
+                                {user.joinedDate || 'N/A'}
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                {user.id !== currentUser.id ? (
+                                  <button
+                                    onClick={() => {
+                                      if (
+                                        window.confirm(
+                                          `Are you sure you want to delete user "${user.name}"?`
+                                        )
+                                      ) {
+                                        deleteUserByAdmin(user.id);
+                                      }
+                                    }}
+                                    className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                                    title="Delete User"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                ) : (
+                                  <span className="text-[11px] text-slate-500 italic">
+                                    Active (You)
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------- */}
+            {/* TAB 3: PRODUCTS */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'products' && (
+              <div className="space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold text-white tracking-tight">
+                      {lang === 'bn' ? 'প্রোডাক্ট ব্যবস্থাপনা' : 'Products Management'}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Enable/disable products, adjust stock, pricing, and catalog details.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setProductToEdit(null);
+                        setIsProductFormOpen(true);
+                      }}
+                      className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-md shadow-emerald-600/30 transition-all cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add Product
+                    </button>
+                  </div>
+                </div>
+
+                {/* Filters */}
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <div className="relative flex-1 w-full">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search products by English/Bangla name..."
                       value={productSearch}
                       onChange={(e) => setProductSearch(e.target.value)}
-                      placeholder={lang === 'bn' ? 'প্রোডাক্ট খুঁজুন...' : 'Search products by title...'}
-                      className="w-full pl-8 pr-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:border-emerald-600 outline-hidden font-medium"
+                      className="w-full pl-9 pr-3 py-2 bg-slate-800/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                     />
-                    <Search className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
                   </div>
 
                   <select
                     value={productCategoryFilter}
                     onChange={(e) => setProductCategoryFilter(e.target.value)}
-                    className="px-3 py-2 text-xs bg-white border border-gray-200 rounded-xl focus:border-emerald-600 outline-hidden font-medium cursor-pointer"
+                    className="w-full sm:w-48 px-3 py-2 bg-slate-800/80 border border-slate-700/80 rounded-xl text-xs text-slate-200 focus:outline-none focus:border-emerald-500 cursor-pointer"
                   >
-                    <option value="all">{t.allCategories}</option>
-                    {categories.slice(1).map((cat) => (
+                    <option value="all">All Categories</option>
+                    {categories.map((cat) => (
                       <option key={cat.id} value={cat.id}>
-                        {cat.nameEn} ({cat.nameBn})
+                        {cat.nameEn}
                       </option>
                     ))}
                   </select>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={handleAddNewProduct}
-                  className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer transition-all"
-                >
-                  <Plus className="w-4 h-4" />
-                  <span>{t.addProduct}</span>
-                </button>
-              </div>
-
-              {/* Products Table / Cards */}
-              <div className="space-y-3">
-                {filteredProducts.length === 0 ? (
-                  <div className="text-center py-12 bg-gray-50 rounded-2xl border border-gray-200">
-                    <Layers className="w-10 h-10 text-gray-300 mx-auto mb-2" />
-                    <p className="text-xs font-bold text-gray-700">No products match your search</p>
+                {/* Products Table */}
+                <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-300">
+                      <thead className="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-700/60">
+                        <tr>
+                          <th className="px-4 py-3">Product</th>
+                          <th className="px-4 py-3">Category</th>
+                          <th className="px-4 py-3">Variants & Stock</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700/40">
+                        {filteredProducts.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                              No products found.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredProducts.map((prod) => {
+                            const isEnabled = prod.enabled !== false;
+                            return (
+                              <tr key={prod.id} className="hover:bg-slate-800/40 transition-colors">
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-3">
+                                    <img
+                                      src={prod.image}
+                                      alt={prod.titleEn}
+                                      className="w-10 h-10 rounded-lg object-cover bg-slate-800 shrink-0"
+                                      referrerPolicy="no-referrer"
+                                    />
+                                    <div>
+                                      <div className="font-semibold text-white">{prod.titleEn}</div>
+                                      <div className="text-[11px] text-slate-400 font-bengali">
+                                        {prod.titleBn}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-[11px] font-medium uppercase">
+                                    {prod.categoryId}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="space-y-1">
+                                    {prod.variants.slice(0, 2).map((v) => (
+                                      <div
+                                        key={v.id}
+                                        className="flex items-center justify-between gap-3 text-[11px] bg-slate-900/60 px-2 py-1 rounded"
+                                      >
+                                        <span className="text-slate-300">{v.name}</span>
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-emerald-400 font-bold font-mono">
+                                            ৳{v.salePrice}
+                                          </span>
+                                          <span className="text-slate-500 line-through font-mono">
+                                            ৳{v.regularPrice}
+                                          </span>
+                                          <span
+                                            className={`px-1.5 py-0.2 rounded font-mono ${
+                                              v.stockCount > 0
+                                                ? 'bg-emerald-500/10 text-emerald-400'
+                                                : 'bg-red-500/10 text-red-400'
+                                            }`}
+                                          >
+                                            Qty: {v.stockCount}
+                                          </span>
+                                          <button
+                                            onClick={() =>
+                                              setQuickEditVariant({
+                                                productId: prod.id,
+                                                variantId: v.id,
+                                                regularPrice: v.regularPrice,
+                                                salePrice: v.salePrice,
+                                                stockCount: v.stockCount,
+                                              })
+                                            }
+                                            className="text-xs text-slate-400 hover:text-emerald-400 cursor-pointer"
+                                            title="Quick Edit Stock & Price"
+                                          >
+                                            <Pencil className="w-3 h-3" />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ))}
+                                    {prod.variants.length > 2 && (
+                                      <div className="text-[10px] text-slate-500">
+                                        +{prod.variants.length - 2} more variants
+                                      </div>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <button
+                                    onClick={() => toggleProductStatus(prod.id, !isEnabled)}
+                                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors cursor-pointer ${
+                                      isEnabled
+                                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                                        : 'bg-slate-800 text-slate-500 border border-slate-700'
+                                    }`}
+                                  >
+                                    {isEnabled ? '● Active' : '○ Disabled'}
+                                  </button>
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      onClick={() => {
+                                        setProductToEdit(prod);
+                                        setIsProductFormOpen(true);
+                                      }}
+                                      className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                      title="Edit Product"
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        if (
+                                          window.confirm(
+                                            `Delete product "${prod.titleEn}" permanently?`
+                                          )
+                                        ) {
+                                          deleteProduct(prod.id);
+                                        }
+                                      }}
+                                      className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                                      title="Delete Product"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
                   </div>
-                ) : (
-                  filteredProducts.map((prod) => {
-                    const minPrice = Math.min(...prod.variants.map((v) => v.salePrice));
-                    const maxPrice = Math.max(...prod.variants.map((v) => v.salePrice));
-                    const hasStock = prod.variants.some((v) => v.inStock);
+                </div>
+              </div>
+            )}
 
-                    return (
-                      <div
-                        key={prod.id}
-                        className="p-4 bg-gray-50/90 rounded-2xl border border-gray-200 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-all hover:border-gray-300"
+            {/* ---------------------------------------------------- */}
+            {/* TAB 4: ORDERS */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'orders' && (
+              <div className="space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold text-white tracking-tight">
+                      {lang === 'bn' ? 'অর্ডার ব্যবস্থাপনা' : 'Orders Fulfillment'}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Verify payments, update statuses, dispatch deliveries, and attach notes.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Filter & Search */}
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <div className="relative flex-1 w-full">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search by Order ID, Phone, TrxID, or Name..."
+                      value={orderSearch}
+                      onChange={(e) => setOrderSearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-800/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
+                    {['all', 'pending', 'processing', 'completed', 'cancelled'].map((status) => (
+                      <button
+                        key={status}
+                        onClick={() => setOrderStatusFilter(status)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold uppercase transition-all whitespace-nowrap cursor-pointer ${
+                          orderStatusFilter === status
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-800 text-slate-400 hover:text-white'
+                        }`}
                       >
-                        {/* Thumbnail and Title */}
-                        <div className="flex items-center gap-3 min-w-0">
-                          <img
-                            src={prod.image}
-                            alt={prod.titleEn}
-                            className="w-14 h-14 rounded-xl object-cover border border-gray-200 shrink-0 bg-white"
-                          />
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-slate-900 text-white">
-                                {prod.categoryId.toUpperCase()}
-                              </span>
-                              {prod.featured && (
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-amber-100 text-amber-800">
-                                  Featured
+                        {status}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Orders Table */}
+                <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-300">
+                      <thead className="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-700/60">
+                        <tr>
+                          <th className="px-4 py-3">Order ID</th>
+                          <th className="px-4 py-3">Customer</th>
+                          <th className="px-4 py-3">Items</th>
+                          <th className="px-4 py-3">Payment</th>
+                          <th className="px-4 py-3">Total</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700/40">
+                        {filteredOrders.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="px-4 py-8 text-center text-slate-500">
+                              No matching orders found.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredOrders.map((order) => (
+                            <tr key={order.id} className="hover:bg-slate-800/40 transition-colors">
+                              <td className="px-4 py-3 font-mono font-bold text-white">
+                                #{order.orderId || order.id.substring(0, 8)}
+                                <div className="text-[10px] text-slate-500 font-normal">
+                                  {new Date(order.createdAt).toLocaleString()}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-slate-100">
+                                  {order.customerName}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  {order.customerPhone}
+                                </div>
+                                <div className="text-[10px] text-slate-500">
+                                  {order.customerEmail}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <div className="space-y-0.5">
+                                  {order.items.map((item, idx) => (
+                                    <div key={idx} className="text-[11px] text-slate-300">
+                                      {item.quantity}x {item.productTitle} ({item.variantName})
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="uppercase font-bold text-emerald-400">
+                                  {order.paymentMethod}
                                 </span>
-                              )}
-                              <span
-                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                                  hasStock
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-rose-100 text-rose-800'
-                                }`}
-                              >
-                                {hasStock ? t.inStock : t.outOfStock}
-                              </span>
-                            </div>
+                                <div className="font-mono text-[11px] text-slate-300">
+                                  Trx: {order.trxId || 'N/A'}
+                                </div>
+                                {order.paymentSenderNumber && (
+                                  <div className="text-[10px] text-slate-500">
+                                    From: {order.paymentSenderNumber}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 font-bold text-white font-mono">
+                                ৳{order.totalAmount}
+                              </td>
+                              <td className="px-4 py-3">
+                                <select
+                                  value={order.status}
+                                  onChange={(e) =>
+                                    updateOrderStatus(order.id, e.target.value as OrderStatus)
+                                  }
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold uppercase border cursor-pointer ${
+                                    order.status === 'completed'
+                                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                                      : order.status === 'processing'
+                                      ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
+                                      : order.status === 'cancelled'
+                                      ? 'bg-red-500/10 text-red-400 border-red-500/30'
+                                      : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                                  }`}
+                                >
+                                  <option value="pending" className="bg-slate-900 text-amber-400">
+                                    Pending
+                                  </option>
+                                  <option value="processing" className="bg-slate-900 text-blue-400">
+                                    Processing
+                                  </option>
+                                  <option value="completed" className="bg-slate-900 text-emerald-400">
+                                    Completed
+                                  </option>
+                                  <option value="cancelled" className="bg-slate-900 text-red-400">
+                                    Cancelled
+                                  </option>
+                                </select>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <button
+                                    onClick={() => {
+                                      setSelectedOrderForView(order);
+                                      setAdminNoteInput(order.adminNotes || '');
+                                    }}
+                                    className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                    title="View Details & Notes"
+                                  >
+                                    <Eye className="w-4 h-4" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleOpenDeliveryModal(order)}
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors"
+                                  >
+                                    Deliver
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      if (
+                                        window.confirm(
+                                          `Delete order #${order.orderId || order.id} permanently?`
+                                        )
+                                      ) {
+                                        deleteOrder(order.id);
+                                      }
+                                    }}
+                                    className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                                    title="Delete Order"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
 
-                            <h4 className="text-xs sm:text-sm font-black text-gray-900 truncate mt-1">
-                              {prod.titleEn}
-                            </h4>
-                            <p className="text-[11px] text-gray-500 truncate font-medium">
-                              {prod.titleBn}
-                            </p>
-                          </div>
-                        </div>
+            {/* ---------------------------------------------------- */}
+            {/* TAB 5: DELIVERIES */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'deliveries' && (
+              <div className="space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold text-white tracking-tight">
+                      {lang === 'bn' ? 'ডেলিভারি রেকর্ড ও প্রেরণ' : 'Deliveries Management'}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      All digital delivery records, credentials, keys, and resend logs.
+                    </p>
+                  </div>
 
-                        {/* Variants & Pricing Info */}
-                        <div className="flex flex-wrap items-center gap-3 md:gap-6 text-xs">
-                          <div>
-                            <span className="text-[10px] text-gray-400 font-bold uppercase block">
-                              {t.variants}
-                            </span>
-                            <span className="font-bold text-gray-800">
-                              {prod.variants.length} Tiers
-                            </span>
-                          </div>
+                  <div className="relative w-full sm:w-72">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search Order ID, Product, or User..."
+                      value={deliverySearch}
+                      onChange={(e) => setDeliverySearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-800/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
 
-                          <div>
-                            <span className="text-[10px] text-gray-400 font-bold uppercase block">
-                              {t.price}
-                            </span>
-                            <span className="font-black text-emerald-700 font-mono text-sm">
-                              ৳{minPrice} {minPrice !== maxPrice && `- ৳${maxPrice}`}
-                            </span>
-                          </div>
+                {/* Deliveries Table */}
+                <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-300">
+                      <thead className="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-700/60">
+                        <tr>
+                          <th className="px-4 py-3">Delivery / Order ID</th>
+                          <th className="px-4 py-3">Product</th>
+                          <th className="px-4 py-3">Type</th>
+                          <th className="px-4 py-3">Delivered At</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700/40">
+                        {filteredDeliveries.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="px-4 py-8 text-center text-slate-500">
+                              No deliveries dispatched yet.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredDeliveries.map((deliv) => (
+                            <tr key={deliv.id} className="hover:bg-slate-800/40 transition-colors">
+                              <td className="px-4 py-3 font-mono font-bold text-white">
+                                #{deliv.orderId || deliv.id.substring(0, 8)}
+                                <div className="text-[10px] text-slate-500 font-normal">
+                                  User: {deliv.userId?.substring(0, 10)}...
+                                </div>
+                              </td>
+                              <td className="px-4 py-3 font-medium text-slate-200">
+                                {deliv.productTitle || 'Digital Item'}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 uppercase text-[10px] font-semibold">
+                                  {deliv.deliveryType || 'credentials'}
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-slate-400 text-[11px]">
+                                {new Date(deliv.deliveredAt || deliv.createdAt || '').toLocaleString()}
+                              </td>
+                              <td className="px-4 py-3">
+                                <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                  ● Delivered
+                                </span>
+                              </td>
+                              <td className="px-4 py-3 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  <button
+                                    onClick={() => setViewDeliveryContentModal(deliv)}
+                                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-medium cursor-pointer transition-colors"
+                                  >
+                                    View Content
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      const relatedOrder = orders.find((o) => o.id === deliv.orderId);
+                                      if (relatedOrder) {
+                                        handleOpenDeliveryModal(relatedOrder);
+                                      } else {
+                                        showToast(
+                                          lang === 'bn' ? 'অর্ডার পাওয়া যায়নি' : 'Order not found',
+                                          'error'
+                                        );
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium cursor-pointer transition-colors"
+                                  >
+                                    Update / Resend
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
 
-                          <div>
-                            <span className="text-[10px] text-gray-400 font-bold uppercase block">
-                              Sold
-                            </span>
-                            <span className="font-bold text-gray-700">
-                              {prod.totalSold} Units
-                            </span>
-                          </div>
+            {/* ---------------------------------------------------- */}
+            {/* TAB 6: SETTINGS */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'settings' && (
+              <div className="space-y-5 max-w-3xl">
+                <div>
+                  <h2 className="text-xl font-bold text-white tracking-tight">
+                    {lang === 'bn' ? 'সাইট ও পেমেন্ট সেটিংস' : 'Global Site Settings'}
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Configure official payment numbers, support lines, delivery banners, and maintenance status.
+                  </p>
+                </div>
 
-                          {/* Action Buttons: Edit & Delete */}
-                          <div className="flex items-center gap-1.5 self-end md:self-auto">
-                            <button
-                              type="button"
-                              onClick={() => handleEditProduct(prod)}
-                              className="px-3 py-1.5 bg-white hover:bg-emerald-50 text-gray-700 hover:text-emerald-700 font-bold text-xs rounded-xl border border-gray-200 hover:border-emerald-300 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
-                              title={t.editProduct}
-                            >
-                              <Pencil className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>{lang === 'bn' ? 'এডিট' : 'Edit'}</span>
-                            </button>
+                <form onSubmit={handleSaveSettings} className="space-y-4">
+                  {/* Site Name & Support */}
+                  <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-4 space-y-4">
+                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Settings className="w-4 h-4 text-emerald-400" />
+                      General Information
+                    </h3>
 
-                            <button
-                              type="button"
-                              onClick={() => setProductToDelete(prod)}
-                              className="px-3 py-1.5 bg-white hover:bg-rose-50 text-gray-700 hover:text-rose-700 font-bold text-xs rounded-xl border border-gray-200 hover:border-rose-300 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
-                              title={t.deleteProduct}
-                            >
-                              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-                              <span>{lang === 'bn' ? 'মুছুন' : 'Delete'}</span>
-                            </button>
-                          </div>
-                        </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Site Name</label>
+                        <input
+                          type="text"
+                          value={settingsForm.siteName}
+                          onChange={(e) =>
+                            setSettingsForm({ ...settingsForm, siteName: e.target.value })
+                          }
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
+                        />
                       </div>
-                    );
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Support Email</label>
+                        <input
+                          type="email"
+                          value={settingsForm.supportEmail}
+                          onChange={(e) =>
+                            setSettingsForm({ ...settingsForm, supportEmail: e.target.value })
+                          }
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">Support Phone</label>
+                        <input
+                          type="text"
+                          value={settingsForm.supportPhone}
+                          onChange={(e) =>
+                            setSettingsForm({ ...settingsForm, supportPhone: e.target.value })
+                          }
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-slate-400 mb-1">
+                          WhatsApp Support Number
+                        </label>
+                        <input
+                          type="text"
+                          value={settingsForm.whatsappSupportNumber}
+                          onChange={(e) =>
+                            setSettingsForm({
+                              ...settingsForm,
+                              whatsappSupportNumber: e.target.value,
+                            })
+                          }
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Payment Accounts */}
+                  <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-4 space-y-4">
+                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                      <DollarSign className="w-4 h-4 text-emerald-400" />
+                      Payment Numbers (bKash, Nagad, Rocket)
+                    </h3>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-pink-400 mb-1">
+                          bKash Number
+                        </label>
+                        <input
+                          type="text"
+                          value={settingsForm.bkashNumber}
+                          onChange={(e) =>
+                            setSettingsForm({ ...settingsForm, bkashNumber: e.target.value })
+                          }
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:border-pink-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-orange-400 mb-1">
+                          Nagad Number
+                        </label>
+                        <input
+                          type="text"
+                          value={settingsForm.nagadNumber}
+                          onChange={(e) =>
+                            setSettingsForm({ ...settingsForm, nagadNumber: e.target.value })
+                          }
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:border-orange-500"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-purple-400 mb-1">
+                          Rocket Number
+                        </label>
+                        <input
+                          type="text"
+                          value={settingsForm.rocketNumber}
+                          onChange={(e) =>
+                            setSettingsForm({ ...settingsForm, rocketNumber: e.target.value })
+                          }
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Delivery Notices & Maintenance */}
+                  <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-4 space-y-4">
+                    <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                      <Truck className="w-4 h-4 text-emerald-400" />
+                      Delivery Notices & Maintenance Mode
+                    </h3>
+
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">
+                        Delivery Notice (Bangla)
+                      </label>
+                      <input
+                        type="text"
+                        value={settingsForm.deliveryNoticeBn}
+                        onChange={(e) =>
+                          setSettingsForm({ ...settingsForm, deliveryNoticeBn: e.target.value })
+                        }
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500 font-bengali"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-xs text-slate-400 mb-1">
+                        Delivery Notice (English)
+                      </label>
+                      <input
+                        type="text"
+                        value={settingsForm.deliveryNoticeEn}
+                        onChange={(e) =>
+                          setSettingsForm({ ...settingsForm, deliveryNoticeEn: e.target.value })
+                        }
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+
+                    <div className="pt-2 flex items-center justify-between border-t border-slate-700/50">
+                      <div>
+                        <span className="text-xs font-semibold text-white">Maintenance Mode</span>
+                        <p className="text-[11px] text-slate-400">
+                          Temporarily disable cart checkout for site upgrades.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSettingsForm({
+                            ...settingsForm,
+                            maintenanceMode: !settingsForm.maintenanceMode,
+                          })
+                        }
+                        className={`px-3 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
+                          settingsForm.maintenanceMode
+                            ? 'bg-amber-500 text-black font-bold'
+                            : 'bg-slate-800 text-slate-400 border border-slate-700'
+                        }`}
+                      >
+                        {settingsForm.maintenanceMode ? 'ENABLED' : 'DISABLED'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-600/20 transition-all cursor-pointer flex items-center justify-center gap-2"
+                  >
+                    <Save className="w-4 h-4" />
+                    Save All Settings
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------- */}
+            {/* TAB 7: ADMINS */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'admins' && (
+              <div className="space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold text-white tracking-tight">
+                      {lang === 'bn' ? 'অ্যাডমিন অধিকার ও অ্যাক্সেস' : 'Administrators List'}
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Users authorized to access the Admin Control Panel.
+                    </p>
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      setNewAdminUserId('');
+                      setNewAdminName('');
+                      setNewAdminEmail('');
+                      setIsAddAdminModalOpen(true);
+                    }}
+                    className="flex items-center gap-2 px-3.5 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-semibold shadow-md shadow-purple-600/30 transition-all cursor-pointer"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                    Add New Admin
+                  </button>
+                </div>
+
+                <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-300">
+                      <thead className="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-700/60">
+                        <tr>
+                          <th className="px-4 py-3">Admin</th>
+                          <th className="px-4 py-3">Email</th>
+                          <th className="px-4 py-3">User ID</th>
+                          <th className="px-4 py-3">Created Date</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700/40">
+                        {allAdmins.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
+                              No explicit admin documents found in /admins collection.
+                            </td>
+                          </tr>
+                        ) : (
+                          allAdmins.map((adm) => {
+                            const isSelf = adm.id === currentUser.id;
+                            const isSuperAdmin = adm.email === 'shahinpc2018@gmail.com';
+                            return (
+                              <tr key={adm.id} className="hover:bg-slate-800/40 transition-colors">
+                                <td className="px-4 py-3 font-semibold text-white flex items-center gap-2">
+                                  <ShieldCheck className="w-4 h-4 text-purple-400 shrink-0" />
+                                  {adm.name}
+                                  {isSuperAdmin && (
+                                    <span className="px-1.5 py-0.2 bg-amber-500/20 text-amber-400 border border-amber-500/40 rounded text-[10px] font-bold">
+                                      Super Admin
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-slate-200">{adm.email}</td>
+                                <td className="px-4 py-3 font-mono text-[11px] text-slate-400">
+                                  {adm.id}
+                                </td>
+                                <td className="px-4 py-3 text-slate-400 text-[11px]">
+                                  {adm.createdAt || 'N/A'}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  {!isSelf && !isSuperAdmin ? (
+                                    <button
+                                      onClick={() => {
+                                        if (
+                                          window.confirm(
+                                            `Revoke admin access for "${adm.name}" (${adm.email})?`
+                                          )
+                                        ) {
+                                          removeAdminUser(adm.id);
+                                        }
+                                      }}
+                                      className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                                      title="Revoke Admin Access"
+                                    >
+                                      <UserMinus className="w-4 h-4" />
+                                    </button>
+                                  ) : (
+                                    <span className="text-[11px] text-slate-500 italic">
+                                      {isSelf ? 'You (Protected)' : 'Super Admin'}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
+      </div>
+
+      {/* ---------------------------------------------------- */}
+      {/* MODAL: ADD ADMIN DIALOG */}
+      {/* ---------------------------------------------------- */}
+      {isAddAdminModalOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-6 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-white flex items-center gap-2">
+                <UserPlus className="w-5 h-5 text-purple-400" />
+                Add New Admin
+              </h3>
+              <button
+                onClick={() => setIsAddAdminModalOpen(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Select an existing user from the dropdown or enter their credentials directly to grant full administrative privileges.
+            </p>
+
+            {/* Quick Pick from Registered Users */}
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Pick Existing User</label>
+              <select
+                onChange={(e) => {
+                  const u = allUsers.find((user) => user.id === e.target.value);
+                  if (u) {
+                    setNewAdminUserId(u.id);
+                    setNewAdminName(u.name);
+                    setNewAdminEmail(u.email);
+                  }
+                }}
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-purple-500"
+              >
+                <option value="">-- Choose User --</option>
+                {allUsers
+                  .filter((u) => u.role !== 'admin')
+                  .map((u) => (
+                    <option key={u.id} value={u.id}>
+                      {u.name} ({u.email || u.id})
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">User ID (Firestore UID)</label>
+              <input
+                type="text"
+                placeholder="e.g. 7d8w9s0a1b2c..."
+                value={newAdminUserId}
+                onChange={(e) => setNewAdminUserId(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:border-purple-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Admin Name</label>
+              <input
+                type="text"
+                placeholder="Full Name"
+                value={newAdminName}
+                onChange={(e) => setNewAdminName(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Admin Email</label>
+              <input
+                type="email"
+                placeholder="admin@example.com"
+                value={newAdminEmail}
+                onChange={(e) => setNewAdminEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-purple-500"
+              />
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsAddAdminModalOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!newAdminUserId.trim()) {
+                    showToast('User ID is required', 'error');
+                    return;
+                  }
+                  await addAdminUser({
+                    id: newAdminUserId.trim(),
+                    name: newAdminName.trim() || 'Admin',
+                    email: newAdminEmail.trim(),
+                  });
+                  setIsAddAdminModalOpen(false);
+                }}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold shadow-md shadow-purple-600/30 cursor-pointer"
+              >
+                Confirm Add Admin
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* MODAL: QUICK EDIT STOCK & PRICE */}
+      {/* ---------------------------------------------------- */}
+      {quickEditVariant && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-sm p-6 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-white flex items-center gap-2">
+                <SlidersHorizontal className="w-4 h-4 text-emerald-400" />
+                Quick Price & Stock Update
+              </h3>
+              <button
+                onClick={() => setQuickEditVariant(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Sale Price (৳)</label>
+              <input
+                type="number"
+                value={quickEditVariant.salePrice}
+                onChange={(e) =>
+                  setQuickEditVariant({
+                    ...quickEditVariant,
+                    salePrice: parseFloat(e.target.value) || 0,
                   })
-                )}
+                }
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Regular Price (৳)</label>
+              <input
+                type="number"
+                value={quickEditVariant.regularPrice}
+                onChange={(e) =>
+                  setQuickEditVariant({
+                    ...quickEditVariant,
+                    regularPrice: parseFloat(e.target.value) || 0,
+                  })
+                }
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Stock Count</label>
+              <input
+                type="number"
+                value={quickEditVariant.stockCount}
+                onChange={(e) =>
+                  setQuickEditVariant({
+                    ...quickEditVariant,
+                    stockCount: parseInt(e.target.value, 10) || 0,
+                  })
+                }
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setQuickEditVariant(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  await updateProductPrice(
+                    quickEditVariant.productId,
+                    quickEditVariant.variantId,
+                    quickEditVariant.regularPrice,
+                    quickEditVariant.salePrice
+                  );
+                  await updateProductStock(
+                    quickEditVariant.productId,
+                    quickEditVariant.variantId,
+                    quickEditVariant.stockCount
+                  );
+                  setQuickEditVariant(null);
+                  showToast('Stock and price updated successfully', 'success');
+                }}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* MODAL: VIEW ORDER DETAILS & ADMIN NOTES */}
+      {/* ---------------------------------------------------- */}
+      {selectedOrderForView && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg p-6 space-y-4 text-slate-100 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div>
+                <h3 className="font-bold text-white flex items-center gap-2">
+                  <Package className="w-5 h-5 text-emerald-400" />
+                  Order #{selectedOrderForView.orderId || selectedOrderForView.id}
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Placed on {new Date(selectedOrderForView.createdAt).toLocaleString()}
+                </p>
+              </div>
+              <button
+                onClick={() => setSelectedOrderForView(null)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Customer Details */}
+            <div className="bg-slate-800/60 rounded-xl p-3 text-xs space-y-1">
+              <div className="text-slate-400 font-semibold">Customer Information</div>
+              <div className="text-slate-200">
+                <span className="text-slate-400">Name:</span> {selectedOrderForView.customerName}
+              </div>
+              <div className="text-slate-200">
+                <span className="text-slate-400">Email:</span> {selectedOrderForView.customerEmail}
+              </div>
+              <div className="text-slate-200">
+                <span className="text-slate-400">Phone:</span> {selectedOrderForView.customerPhone}
+              </div>
+              <div className="text-slate-200">
+                <span className="text-slate-400">User ID:</span> {selectedOrderForView.userId}
               </div>
             </div>
-          )}
 
-          {/* TAB 3: SETTINGS */}
-          {activeTab === 'settings' && (
-            <form onSubmit={handleSaveSettings} className="space-y-4 max-w-xl">
-              <h3 className="text-xs font-bold text-gray-800 uppercase tracking-wider">
-                MFS Payment Gateway Phone Numbers
+            {/* Payment Details */}
+            <div className="bg-slate-800/60 rounded-xl p-3 text-xs space-y-1">
+              <div className="text-slate-400 font-semibold">Payment Verification</div>
+              <div className="text-slate-200">
+                <span className="text-slate-400">Method:</span>{' '}
+                <span className="uppercase font-bold text-emerald-400">
+                  {selectedOrderForView.paymentMethod}
+                </span>
+              </div>
+              <div className="text-slate-200">
+                <span className="text-slate-400">TrxID:</span>{' '}
+                <span className="font-mono text-white font-bold">{selectedOrderForView.trxId}</span>
+              </div>
+              {selectedOrderForView.paymentSenderNumber && (
+                <div className="text-slate-200">
+                  <span className="text-slate-400">Sender Number:</span>{' '}
+                  <span className="font-mono">{selectedOrderForView.paymentSenderNumber}</span>
+                </div>
+              )}
+              <div className="text-slate-200">
+                <span className="text-slate-400">Total Amount:</span>{' '}
+                <span className="font-bold text-emerald-400 font-mono">
+                  ৳{selectedOrderForView.totalAmount}
+                </span>
+              </div>
+            </div>
+
+            {/* Items */}
+            <div className="bg-slate-800/60 rounded-xl p-3 text-xs space-y-2">
+              <div className="text-slate-400 font-semibold">Ordered Items</div>
+              {selectedOrderForView.items.map((item, idx) => (
+                <div key={idx} className="flex justify-between items-center text-slate-300">
+                  <span>
+                    {item.quantity}x {item.productTitle} ({item.variantName})
+                  </span>
+                  <span className="font-mono text-white">৳{item.salePrice * item.quantity}</span>
+                </div>
+              ))}
+            </div>
+
+            {/* Admin Notes */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                Admin Notes (Internal / Follow-up)
+              </label>
+              <textarea
+                rows={3}
+                value={adminNoteInput}
+                onChange={(e) => setAdminNoteInput(e.target.value)}
+                placeholder="Add notes e.g., 'Verified manually with bKash statement', 'Customer contacted on WhatsApp'..."
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-slate-800">
+              <button
+                onClick={() => {
+                  handleOpenDeliveryModal(selectedOrderForView);
+                  setSelectedOrderForView(null);
+                }}
+                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Go to Delivery
+              </button>
+
+              <button
+                onClick={async () => {
+                  await updateOrderAdminNotes(selectedOrderForView.id, adminNoteInput.trim());
+                  setSelectedOrderForView(null);
+                }}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold cursor-pointer flex items-center gap-1.5"
+              >
+                <Save className="w-4 h-4 text-emerald-400" />
+                Save Note
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* MODAL: DISPATCH / EDIT DELIVERY */}
+      {/* ---------------------------------------------------- */}
+      {selectedOrderForDelivery && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-6 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-white flex items-center gap-2">
+                <Truck className="w-5 h-5 text-emerald-400" />
+                Deliver Order #{selectedOrderForDelivery.orderId || selectedOrderForDelivery.id}
               </h3>
+              <button
+                onClick={() => setSelectedOrderForDelivery(null)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
 
-              <div>
-                <label className="text-xs font-bold text-gray-700 block mb-1">
-                  bKash Number ({siteSettings.bkashType})
-                </label>
-                <input
-                  type="text"
-                  value={bkashNum}
-                  onChange={(e) => setBkashNum(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl font-mono font-bold"
-                />
+            <div className="text-xs text-slate-300">
+              Delivering to: <span className="font-semibold text-white">{selectedOrderForDelivery.customerName}</span> (
+              {selectedOrderForDelivery.customerPhone})
+            </div>
+
+            {/* Delivery Type */}
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Delivery Type</label>
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { id: 'credentials', label: 'Login Credentials' },
+                  { id: 'license_key', label: 'License Key' },
+                  { id: 'link', label: 'Invite / Direct Link' },
+                  { id: 'file', label: 'Download File URL' },
+                ].map((type) => (
+                  <button
+                    key={type.id}
+                    type="button"
+                    onClick={() => setDeliveryMode(type.id as any)}
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold border text-left transition-colors cursor-pointer ${
+                      deliveryMode === type.id
+                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
+                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {type.label}
+                  </button>
+                ))}
               </div>
+            </div>
 
-              <div>
-                <label className="text-xs font-bold text-gray-700 block mb-1">
-                  Nagad Number ({siteSettings.nagadType})
-                </label>
-                <input
-                  type="text"
-                  value={nagadNum}
-                  onChange={(e) => setNagadNum(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl font-mono font-bold"
-                />
-              </div>
+            {/* Delivery Content */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1">
+                {deliveryMode === 'credentials'
+                  ? 'Account Email & Password'
+                  : deliveryMode === 'license_key'
+                  ? 'Activation / License Key'
+                  : 'Direct Link or Download URL'}
+              </label>
+              <textarea
+                rows={4}
+                value={deliveryContentInput}
+                onChange={(e) => setDeliveryContentInput(e.target.value)}
+                placeholder={
+                  deliveryMode === 'credentials'
+                    ? 'Email: user@example.com\nPassword: secret_pass_123\nProfile: 1 (Pin: 1234)'
+                    : deliveryMode === 'license_key'
+                    ? 'XXXX-XXXX-XXXX-XXXX'
+                    : 'https://...'
+                }
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:border-emerald-500 placeholder-slate-500"
+              />
+            </div>
 
-              <div>
-                <label className="text-xs font-bold text-gray-700 block mb-1">
-                  Rocket Number ({siteSettings.rocketType})
-                </label>
-                <input
-                  type="text"
-                  value={rocketNum}
-                  onChange={(e) => setRocketNum(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl font-mono font-bold"
-                />
-              </div>
+            {/* Delivery Instructions */}
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">
+                Instructions / Warranty Note (Optional)
+              </label>
+              <input
+                type="text"
+                value={deliveryNotesInput}
+                onChange={(e) => setDeliveryNotesInput(e.target.value)}
+                placeholder="e.g. Please do not change profile name or master password."
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white focus:outline-none focus:border-emerald-500 placeholder-slate-500"
+              />
+            </div>
 
-              <div className="pt-2">
-                <label className="text-xs font-bold text-gray-700 block mb-1">
-                  Top Announcement Ticker (Bangla)
-                </label>
-                <input
-                  type="text"
-                  value={announcementBn}
-                  onChange={(e) => setAnnouncementBn(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl font-medium"
-                />
-              </div>
+            <div className="pt-2 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedOrderForDelivery(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveDeliverySubmit}
+                disabled={isDeliveringOrder}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/30 cursor-pointer disabled:opacity-50 flex items-center gap-2"
+              >
+                {isDeliveringOrder ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Sending...
+                  </>
+                ) : (
+                  <>
+                    <Send className="w-4 h-4" />
+                    Send Delivery Now
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-              <div>
-                <label className="text-xs font-bold text-gray-700 block mb-1">
-                  Top Announcement Ticker (English)
-                </label>
-                <input
-                  type="text"
-                  value={announcementEn}
-                  onChange={(e) => setAnnouncementEn(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl font-medium"
-                />
+      {/* ---------------------------------------------------- */}
+      {/* MODAL: VIEW DELIVERED CONTENT */}
+      {/* ---------------------------------------------------- */}
+      {viewDeliveryContentModal && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-md p-6 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-white flex items-center gap-2">
+                <Truck className="w-5 h-5 text-emerald-400" />
+                Delivered Content
+              </h3>
+              <button
+                onClick={() => setViewDeliveryContentModal(null)}
+                className="text-slate-400 hover:text-white cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-400">
+              Order ID: <span className="font-mono text-white font-bold">{viewDeliveryContentModal.orderId}</span>
+            </div>
+
+            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 relative group">
+              <div className="text-xs font-mono text-emerald-400 whitespace-pre-wrap select-all">
+                {viewDeliveryContentModal.credentials ||
+                  viewDeliveryContentModal.downloadUrl ||
+                  viewDeliveryContentModal.licenseKey ||
+                  'No delivery content recorded.'}
               </div>
 
               <button
-                type="submit"
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl cursor-pointer"
+                onClick={() =>
+                  handleCopyText(
+                    viewDeliveryContentModal.credentials ||
+                      viewDeliveryContentModal.downloadUrl ||
+                      viewDeliveryContentModal.licenseKey ||
+                      ''
+                  )
+                }
+                className="absolute top-2 right-2 p-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition-colors cursor-pointer"
+                title="Copy Content"
               >
-                Save Settings
+                <Copy className="w-4 h-4" />
               </button>
-            </form>
-          )}
+            </div>
+
+            {viewDeliveryContentModal.adminNotes && (
+              <div className="text-xs text-slate-400 bg-slate-800/40 p-3 rounded-lg">
+                <span className="font-semibold text-slate-300">Instructions:</span>{' '}
+                {viewDeliveryContentModal.adminNotes}
+              </div>
+            )}
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setViewDeliveryContentModal(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
+      )}
 
-        {/* Modal Sub-Action: Deliver Digital Product Modal */}
-        {selectedOrderForDelivery && (
-          <div className="fixed inset-0 z-60 bg-black/75 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in">
-            <div className="bg-white rounded-3xl max-w-xl w-full p-5 sm:p-6 space-y-4 border border-gray-200 shadow-2xl max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-start border-b border-gray-100 pb-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center">
-                      <UploadCloud className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <h3 className="text-sm font-black text-gray-900">
-                        Deliver Digital Product
-                      </h3>
-                      <span className="text-[11px] text-gray-500 font-mono">
-                        Order #{selectedOrderForDelivery.id} • Trx: {selectedOrderForDelivery.trxId}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={() => setSelectedOrderForDelivery(null)}
-                  className="text-gray-400 hover:text-gray-700 cursor-pointer p-1 rounded-lg hover:bg-gray-100"
-                >
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Customer Info Box */}
-              <div className="bg-slate-50 p-3 rounded-2xl border border-slate-200 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs">
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Customer</span>
-                  <span className="font-bold text-slate-800">{selectedOrderForDelivery.customerName}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Phone</span>
-                  <span className="font-mono text-slate-800">{selectedOrderForDelivery.customerPhone}</span>
-                </div>
-                <div>
-                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Email</span>
-                  <span className="text-slate-800 truncate block">{selectedOrderForDelivery.customerEmail}</span>
-                </div>
-              </div>
-
-              {/* Order Items */}
-              <div className="space-y-1 bg-gray-50/70 p-3 rounded-xl border border-gray-200 text-xs">
-                <span className="text-[10px] uppercase font-bold text-gray-500 block mb-1">
-                  Ordered Items ({selectedOrderForDelivery.items.length})
-                </span>
-                {selectedOrderForDelivery.items.map((i, idx) => (
-                  <div key={idx} className="flex justify-between items-center text-gray-800">
-                    <span className="font-medium">
-                      {i.productTitle} ({i.variantName})
-                    </span>
-                    <span className="font-bold">৳{i.unitPrice * i.quantity}</span>
-                  </div>
-                ))}
-              </div>
-
-              {/* Delivery Mode Selector */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-2">
-                  Select Delivery Mode:
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setDeliveryMode('file')}
-                    className={`p-2.5 rounded-xl border text-center cursor-pointer transition-all ${
-                      deliveryMode === 'file'
-                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-950 font-bold shadow-xs'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                    }`}
-                  >
-                    <UploadCloud className="w-4 h-4 mx-auto mb-1 text-emerald-600" />
-                    <span className="text-[11px] block">Product File</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setDeliveryMode('credentials')}
-                    className={`p-2.5 rounded-xl border text-center cursor-pointer transition-all ${
-                      deliveryMode === 'credentials'
-                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-950 font-bold shadow-xs'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                    }`}
-                  >
-                    <Lock className="w-4 h-4 mx-auto mb-1 text-emerald-600" />
-                    <span className="text-[11px] block">Key / Account</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => setDeliveryMode('external')}
-                    className={`p-2.5 rounded-xl border text-center cursor-pointer transition-all ${
-                      deliveryMode === 'external'
-                        ? 'border-emerald-500 bg-emerald-50/50 text-emerald-950 font-bold shadow-xs'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                    }`}
-                  >
-                    <ExternalLink className="w-4 h-4 mx-auto mb-1 text-emerald-600" />
-                    <span className="text-[11px] block">External Link</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Delivery Mode Inputs */}
-              {deliveryMode === 'file' && (
-                <div className="space-y-2 bg-emerald-50/40 p-3.5 rounded-xl border border-emerald-200">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-emerald-950">
-                      Product Binary File
-                    </span>
-                    {deliveryFileName && (
-                      <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full">
-                        Firebase Storage
-                      </span>
-                    )}
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                      File Name
-                    </label>
-                    <input
-                      type="text"
-                      value={deliveryFileName}
-                      onChange={(e) => setDeliveryFileName(e.target.value)}
-                      placeholder="e.g. windows11_pro_x64.iso or product.zip"
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg font-mono"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[11px] font-bold text-slate-600 block mb-1">
-                      Download URL (Firebase Storage or direct token URL)
-                    </label>
-                    <input
-                      type="text"
-                      value={deliveryFileUrl}
-                      onChange={(e) => setDeliveryFileUrl(e.target.value)}
-                      placeholder="https://firebasestorage.googleapis.com/..."
-                      className="w-full px-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg font-mono"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {deliveryMode === 'credentials' && (
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-700 block">
-                    Account Credentials / License Keys / Activation Details:
-                  </label>
-                  <textarea
-                    rows={4}
-                    value={deliveryCredentialsInput}
-                    onChange={(e) => setDeliveryCredentialsInput(e.target.value)}
-                    placeholder="Email: customer@example.com&#10;Password: Key123!&#10;PIN: 4421&#10;License Key: XXXX-YYYY-ZZZZ"
-                    className="w-full p-3 text-xs font-mono bg-gray-50 border border-gray-300 rounded-xl outline-hidden focus:border-emerald-600"
-                  />
-                </div>
-              )}
-
-              {deliveryMode === 'external' && (
-                <div className="space-y-2">
-                  <label className="text-xs font-bold text-slate-700 block">
-                    External Access / Portal URL:
-                  </label>
-                  <input
-                    type="url"
-                    value={deliveryFileUrl}
-                    onChange={(e) => setDeliveryFileUrl(e.target.value)}
-                    placeholder="https://drive.google.com/... or https://mega.nz/..."
-                    className="w-full px-3 py-2 text-xs bg-white border border-gray-300 rounded-xl"
-                  />
-                </div>
-              )}
-
-              {/* Delivery Notes to Customer */}
-              <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">
-                  Message / Guide to Customer:
-                </label>
-                <input
-                  type="text"
-                  value={deliveryNotesInput}
-                  onChange={(e) => setDeliveryNotesInput(e.target.value)}
-                  placeholder="Additional instructions or support notice..."
-                  className="w-full px-3 py-2 text-xs bg-white border border-gray-200 rounded-xl"
-                />
-              </div>
-
-              {/* Automated Dispatch Checklist */}
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-1.5 text-[11px] text-slate-600">
-                <div className="flex items-center gap-2">
-                  <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Update Order Status to <strong>Delivered</strong> in Cloud Firestore</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Check className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Record authenticated Delivery document in <strong>deliveries</strong> collection</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Mail className="w-3.5 h-3.5 text-blue-600" />
-                  <span>Trigger automatic <strong>Email Notification</strong> via server backend</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <MessageSquare className="w-3.5 h-3.5 text-emerald-600" />
-                  <span>Trigger automatic <strong>WhatsApp Notification</strong> via server backend</span>
-                </div>
-              </div>
-
-              {/* Action Buttons */}
-              <div className="flex gap-2 pt-2 border-t border-gray-100">
-                <button
-                  type="button"
-                  disabled={isDeliveringOrder}
-                  onClick={() => setSelectedOrderForDelivery(null)}
-                  className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl cursor-pointer transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={isDeliveringOrder}
-                  onClick={handleConfirmDelivery}
-                  className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl cursor-pointer flex items-center justify-center gap-1.5 shadow-md shadow-emerald-600/20 transition-all disabled:opacity-50"
-                >
-                  {isDeliveringOrder ? (
-                    <>
-                      <RefreshCw className="w-4 h-4 animate-spin" />
-                      <span>Delivering & Notifying...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Send className="w-4 h-4" />
-                      <span>Confirm & Deliver Product</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Delete Confirmation Modal */}
-        {productToDelete && (
-          <div className="fixed inset-0 z-70 bg-black/75 flex items-center justify-center p-4 animate-in fade-in">
-            <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-4 border border-gray-200 shadow-2xl">
-              <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mx-auto">
-                <AlertTriangle className="w-6 h-6" />
-              </div>
-
-              <div className="text-center">
-                <h3 className="text-base font-black text-gray-900">{t.deleteProduct}</h3>
-                <p className="text-xs text-gray-500 mt-1">
-                  {t.confirmDeleteProduct}
-                </p>
-                <div className="mt-3 p-3 bg-gray-50 rounded-xl border border-gray-200 flex items-center gap-3">
-                  <img
-                    src={productToDelete.image}
-                    alt={productToDelete.titleEn}
-                    className="w-10 h-10 rounded-lg object-cover"
-                  />
-                  <div className="text-left min-w-0">
-                    <span className="text-xs font-bold text-gray-900 block truncate">
-                      {productToDelete.titleEn}
-                    </span>
-                    <span className="text-[10px] text-gray-500 block truncate">
-                      {productToDelete.titleBn}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setProductToDelete(null)}
-                  className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl cursor-pointer transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleConfirmDeleteProduct}
-                  className="flex-1 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs rounded-xl cursor-pointer transition-colors"
-                >
-                  {t.deleteProduct}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Product Add & Edit Modal */}
-        <AdminProductFormModal
-          isOpen={isProductFormOpen}
-          onClose={() => {
-            setIsProductFormOpen(false);
-            setProductToEdit(null);
-          }}
-          productToEdit={productToEdit}
-        />
-      </div>
+      {/* ---------------------------------------------------- */}
+      {/* PRODUCT FORM MODAL (ADD / EDIT PRODUCT) */}
+      {/* ---------------------------------------------------- */}
+      <AdminProductFormModal
+        isOpen={isProductFormOpen}
+        onClose={() => {
+          setIsProductFormOpen(false);
+          setProductToEdit(null);
+        }}
+        productToEdit={productToEdit}
+      />
     </div>
   );
 };

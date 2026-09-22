@@ -272,32 +272,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // ----------------------------------------------------
-  // 2. SYNC PRODUCTS FROM FIRESTORE (WITH INITIAL SEEDING)
+  // 2. SYNC PRODUCTS FROM FIRESTORE (READ ONLY FOR STOREFRONT)
   // ----------------------------------------------------
   useEffect(() => {
     const productsColRef = collection(db, 'products');
 
     const unsubscribe = onSnapshot(
       productsColRef,
-      async (snapshot) => {
+      (snapshot) => {
         if (snapshot.empty) {
-          // Seed initial products to Firestore
-          try {
-            for (const prod of initialProducts) {
-              // Ensure variants have stockCount property
-              const enrichedVariants = prod.variants.map((v) => ({
-                ...v,
-                stockCount: v.stockCount ?? 50,
-                inStock: v.inStock !== false,
-              }));
-              await setDoc(doc(db, 'products', prod.id), {
-                ...prod,
-                variants: enrichedVariants,
-              });
-            }
-          } catch (seedErr) {
-            console.warn('Initial product seed:', seedErr);
-          }
+          // If no products in Firestore yet, fall back to initial catalog in memory without writing to Firestore
+          setProducts(initialProducts);
+          setProductsLoading(false);
         } else {
           const loadedProducts: Product[] = [];
           snapshot.forEach((docSnap) => {
@@ -312,6 +298,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       },
       (error) => {
         console.error('Products listener error:', error);
+        setProducts(initialProducts);
         setProductsLoading(false);
       }
     );
@@ -1070,57 +1057,117 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // ----------------------------------------------------
-  // 5. TRANSACTIONAL ORDER CREATION & SAFE STOCK DEDUCTION
+  // 5. CUSTOMER ORDER CREATION (READ-ONLY CATALOG, WRITE-ONLY ORDERS)
   // ----------------------------------------------------
   const createOrder = async (
     orderPayload: Omit<Order, 'id' | 'createdAt' | 'status'>
   ): Promise<Order> => {
-    // 1. Ensure user is authenticated with Firebase Auth
-    let uid = auth.currentUser?.uid;
-    if (!uid) {
+    // 1. Validate order items and variants against loaded product catalog
+    if (!orderPayload.items || orderPayload.items.length === 0) {
+      throw new Error(lang === 'bn' ? 'অর্ডার করার জন্য কার্ট খালি।' : 'Cart is empty. Please add items to place an order.');
+    }
+
+    for (const item of orderPayload.items) {
+      const catalogProduct = products.find((p) => p.id === item.productId);
+      if (!catalogProduct) {
+        throw new Error(
+          lang === 'bn'
+            ? `প্রোডাক্ট "${item.productTitle || item.productId}" পাওয়া যায়নি।`
+            : `Product "${item.productTitle || item.productId}" not found.`
+        );
+      }
+      if (catalogProduct.enabled === false) {
+        throw new Error(
+          lang === 'bn'
+            ? `প্রোডাক্টটি এই মুহূর্তে উপলব্ধ নয়।`
+            : `Product "${catalogProduct.titleEn}" is currently unavailable.`
+        );
+      }
+      const matchedVariant = catalogProduct.variants.find((v) => v.id === item.variantId);
+      if (!matchedVariant) {
+        throw new Error(
+          lang === 'bn'
+            ? `নির্বাচিত ভ্যারিয়েন্ট "${item.variantName || item.variantId}" পাওয়া যায়নি।`
+            : `Selected variant "${item.variantName || item.variantId}" not found.`
+        );
+      }
+      if (
+        matchedVariant.inStock === false ||
+        (typeof matchedVariant.stockCount === 'number' && matchedVariant.stockCount <= 0)
+      ) {
+        throw new Error(
+          lang === 'bn'
+            ? `দুঃখিত, "${matchedVariant.nameBn}" এই মুহূর্তে স্টক শেষ!`
+            : `Sorry, "${matchedVariant.nameEn}" is currently out of stock.`
+        );
+      }
+    }
+
+    // 2. Ensure user is authenticated with Firebase Auth (userId = Firebase Auth UID)
+    let authUser = auth.currentUser;
+    if (!authUser) {
       const email = orderPayload.customerEmail?.trim().toLowerCase();
-      const name = orderPayload.customerName?.trim() || 'Customer';
-      const phone = orderPayload.customerPhone?.trim() || '';
       const defaultPass = 'Sheba@2026Secure!';
 
       if (email && email.includes('@')) {
         try {
           const cred = await signInWithEmailAndPassword(auth, email, defaultPass);
-          uid = cred.user.uid;
+          authUser = cred.user;
         } catch {
           try {
             const cred = await createUserWithEmailAndPassword(auth, email, defaultPass);
-            uid = cred.user.uid;
+            authUser = cred.user;
             const newUser: User = {
-              id: uid,
-              name,
+              id: authUser.uid,
+              name: orderPayload.customerName?.trim() || 'Customer',
               email,
-              phone,
+              phone: orderPayload.customerPhone?.trim() || '',
               role: 'customer',
               joinedDate: new Date().toISOString().split('T')[0],
             };
-            await setDoc(doc(db, 'users', uid), newUser);
+            await setDoc(doc(db, 'users', authUser.uid), newUser);
             setCurrentUser(newUser);
           } catch {
-            const anonCred = await signInAnonymously(auth);
-            uid = anonCred.user.uid;
+            try {
+              const anonCred = await signInAnonymously(auth);
+              authUser = anonCred.user;
+            } catch (anonErr) {
+              console.warn('Anonymous sign-in unavailable:', anonErr);
+            }
           }
         }
       } else {
-        const anonCred = await signInAnonymously(auth);
-        uid = anonCred.user.uid;
+        try {
+          const anonCred = await signInAnonymously(auth);
+          authUser = anonCred.user;
+        } catch (anonErr) {
+          console.warn('Anonymous sign-in unavailable:', anonErr);
+        }
       }
+    }
+
+    const uid = authUser?.uid || auth.currentUser?.uid;
+    if (!uid) {
+      throw new Error(
+        lang === 'bn'
+          ? 'অর্ডার সফল করতে অনুগ্রহ করে লগইন করুন।'
+          : 'Authentication is required to place an order. Please sign in.'
+      );
     }
 
     const randomNum = Math.floor(10000 + Math.random() * 90000);
     const orderId = `DPS-${randomNum}`;
+    const primaryItem = orderPayload.items[0];
 
     const rawOrder: Record<string, any> = {
       id: orderId,
+      orderId: orderId,
       userId: uid,
       customerName: orderPayload.customerName?.trim() || '',
       customerPhone: orderPayload.customerPhone?.trim() || '',
+      phone: orderPayload.customerPhone?.trim() || '',
       customerEmail: orderPayload.customerEmail?.trim() || '',
+      email: orderPayload.customerEmail?.trim() || '',
       deliveryNotes: orderPayload.deliveryNotes?.trim() || '',
       items: orderPayload.items.map((item) => ({
         productId: String(item.productId || ''),
@@ -1131,16 +1178,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         quantity: Number(item.quantity) || 1,
         deliveryType: String(item.deliveryType || 'shared_account'),
       })),
+      productId: primaryItem ? primaryItem.productId : '',
+      productName: primaryItem ? (primaryItem.productTitle || '') : '',
+      quantity: primaryItem ? primaryItem.quantity : 1,
+      price: primaryItem ? primaryItem.unitPrice : 0,
       subtotal: Number(orderPayload.subtotal) || 0,
       discount: Number(orderPayload.discount) || 0,
       couponCode: orderPayload.couponCode?.trim() || '',
+      total: Number(orderPayload.totalAmount) || 0,
       totalAmount: Number(orderPayload.totalAmount) || 0,
       paymentMethod: orderPayload.paymentMethod || 'bkash',
       senderNumber: orderPayload.senderNumber?.trim() || '',
+      paymentNumber: orderPayload.senderNumber?.trim() || '',
       trxId: orderPayload.trxId?.trim().toUpperCase() || '',
+      transactionId: orderPayload.trxId?.trim().toUpperCase() || '',
       status: 'verifying',
       adminNotes: orderPayload.adminNotes?.trim() || '',
-      createdAt: new Date().toISOString(),
+      createdAt: serverTimestamp(),
+      createdAtIso: new Date().toISOString(),
       digitalDeliveries: orderPayload.items.map((item) => {
         const matchedProduct = products.find((p) => p.id === item.productId);
         const matchedVariant = matchedProduct?.variants.find((v) => v.id === item.variantId);
@@ -1161,68 +1216,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Sanitize object to guarantee no undefined fields are passed to Firestore
     const sanitizedOrder = JSON.parse(
       JSON.stringify(rawOrder, (key, value) => (value === undefined ? null : value))
-    ) as Order;
+    ) as Record<string, any>;
 
-    console.log('Initiating Firestore order save for:', orderId, sanitizedOrder);
+    console.log('Initiating isolated Firestore order save for:', orderId, sanitizedOrder);
 
     try {
-      // Safe Order Creation: Writes exclusively to orders/{orderId} without updating products.
-      // Customers have read-only access to products. Product updates & stock reconciliation
-      // are managed separately by Admins or dedicated backend workflows.
-      const primaryItem = sanitizedOrder.items[0];
-      const orderDocData: Record<string, any> = {
-        ...sanitizedOrder,
-        orderId: orderId,
-        userId: uid,
-        customerName: sanitizedOrder.customerName,
-        phone: sanitizedOrder.customerPhone,
-        customerPhone: sanitizedOrder.customerPhone,
-        email: sanitizedOrder.customerEmail,
-        customerEmail: sanitizedOrder.customerEmail,
-        productId: primaryItem ? primaryItem.productId : '',
-        productName: primaryItem ? (primaryItem.productTitle || '') : '',
-        quantity: primaryItem ? primaryItem.quantity : 1,
-        price: primaryItem ? primaryItem.unitPrice : 0,
-        total: sanitizedOrder.totalAmount,
-        totalAmount: sanitizedOrder.totalAmount,
-        paymentMethod: sanitizedOrder.paymentMethod,
-        paymentNumber: sanitizedOrder.senderNumber,
-        senderNumber: sanitizedOrder.senderNumber,
-        transactionId: sanitizedOrder.trxId,
-        trxId: sanitizedOrder.trxId,
-        status: 'verifying',
-        createdAt: serverTimestamp(),
-        createdAtIso: new Date().toISOString(),
-      };
-
+      // 3. Isolated Order Creation:
+      // Writes strictly to orders/{orderId} without updating products.
+      // Customers cannot write to products/{productId}, which are managed solely by Admins.
       const orderRef = doc(db, 'orders', orderId);
-      await setDoc(orderRef, orderDocData);
-
-      // Instant local stock feedback in UI without violating products collection rules
-      setProducts((prev) =>
-        prev.map((p) => {
-          const matchedItem = sanitizedOrder.items.find((item) => item.productId === p.id);
-          if (matchedItem) {
-            return {
-              ...p,
-              variants: p.variants.map((v) =>
-                v.id === matchedItem.variantId
-                  ? {
-                      ...v,
-                      stockCount: Math.max(0, (v.stockCount ?? 50) - matchedItem.quantity),
-                      inStock: Math.max(0, (v.stockCount ?? 50) - matchedItem.quantity) > 0,
-                    }
-                  : v
-              ),
-              totalSold: (p.totalSold || 0) + matchedItem.quantity,
-            };
-          }
-          return p;
-        })
-      );
+      await setDoc(orderRef, sanitizedOrder);
 
       const returnedOrder: Order = {
-        ...sanitizedOrder,
+        ...(sanitizedOrder as unknown as Order),
         id: orderId,
         orderId: orderId,
         userId: uid,
@@ -1247,7 +1253,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(t.orderSuccessTitle, 'success');
       return returnedOrder;
     } catch (error) {
-      console.error('Order creation transaction failed:', error);
+      console.error('Order creation failed:', error);
       if (error instanceof Error) {
         console.error('Firestore error details:', error.message, error.stack);
       }

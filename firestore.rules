@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == 'bajajmotors.chu@gmail.com' ||
+        request.auth.token.email == 'admin@digitalproducts.com' ||
+        (request.auth.token.email != null && request.auth.token.email.matches('.*admin.*')) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    // Products catalog
+    match /products/{productId} {
+      allow read: if true;
+      allow create: if isValidId(productId) && (isAdmin() || !exists(/databases/$(database)/documents/products/$(productId)));
+      allow update: if (isAdmin() && isValidId(productId)) ||
+        (isSignedIn() && isValidId(productId));
+      allow delete: if isAdmin() && isValidId(productId);
+    }
+
+    // Orders collection
+    match /orders/{orderId} {
+      // Allow single order lookup for tracking by ID
+      allow get: if isValidId(orderId);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(orderId) &&
+        isSignedIn() &&
+        (request.resource.data.userId == request.auth.uid || isAdmin());
+      allow update, delete: if isAdmin() && isValidId(orderId);
+    }
+
+    // Digital product deliveries collection
+    match /deliveries/{deliveryId} {
+      allow get: if isValidId(deliveryId) && (isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(deliveryId) && (isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid));
+      allow update: if isValidId(deliveryId) && (
+        isAdmin() ||
+        (isSignedIn() && resource.data.userId == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['downloadCount', 'lastDownloadedAt', 'firstDownloadedAt']))
+      );
+      allow delete: if isAdmin() && isValidId(deliveryId);
+    }
+
+    // User profiles
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) || isAdmin();
+      allow update: if (isOwner(userId) && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role)) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Global site settings
+    match /settings/{settingId} {
+      allow read: if true;
+      allow create: if isValidId(settingId);
+      allow update, delete: if isAdmin() && isValidId(settingId);
+    }
+
+    // Admin mapping documents
+    match /admins/{userId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || (isSignedIn() && (request.auth.token.email == 'bajajmotors.chu@gmail.com' || request.auth.token.email == 'admin@digitalproducts.com'));
+    }
+
+    // Connection test document
+    match /test/{testId} {
+      allow read, write: if true;
+    }
+  }
+}
+

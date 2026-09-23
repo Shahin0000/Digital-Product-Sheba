@@ -1141,7 +1141,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     message: string;
     orderId?: string;
   }): Promise<Complaint> => {
-    if (!currentUser || !auth.currentUser) {
+    const uid = auth.currentUser?.uid || currentUser?.id;
+    if (!uid) {
       throw new Error(lang === 'bn' ? 'অনুগ্রহ করে প্রথমে লগইন করুন।' : 'Please sign in first.');
     }
     const cleanSubject = data.subject.trim();
@@ -1156,26 +1157,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const payload: Record<string, any> = {
       id: complaintId,
-      userId: auth.currentUser.uid,
-      customerName: currentUser.name || auth.currentUser.displayName || 'Customer',
-      customerEmail: currentUser.email || auth.currentUser.email || '',
-      customerPhone: currentUser.phone || '',
+      userId: uid,
+      customerName: currentUser?.name || auth.currentUser?.displayName || 'Customer',
+      customerEmail: currentUser?.email || auth.currentUser?.email || '',
+      customerPhone: currentUser?.phone || '',
       subject: cleanSubject,
       message: cleanMessage,
       orderId: data.orderId ? data.orderId.trim() : '',
       status: 'pending',
       adminReply: '',
       createdAt: serverTimestamp(),
-      createdAtIso: nowIso,
       updatedAt: serverTimestamp(),
-      updatedAtIso: nowIso,
     };
 
     try {
       await setDoc(doc(db, 'complaints', complaintId), sanitizeForFirestore(payload));
       const newComplaint: Complaint = {
         id: complaintId,
-        userId: auth.currentUser.uid,
+        userId: uid,
         customerName: payload.customerName,
         customerEmail: payload.customerEmail,
         customerPhone: payload.customerPhone,
@@ -1197,6 +1196,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       );
       return newComplaint;
     } catch (err) {
+      console.error('Complaint Firestore submit error:', err);
       handleFirestoreError(err, OperationType.CREATE, `complaints/${complaintId}`);
       throw err;
     }
@@ -1548,25 +1548,41 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const existingData = existingSnap.exists() ? existingSnap.data() : {};
 
       const primaryItem = order.items && order.items.length > 0 ? order.items[0] : null;
-      const associatedProduct = primaryItem ? products.find((p) => p.id === primaryItem.productId) : null;
+      let associatedProduct = primaryItem ? products.find((p) => p.id === primaryItem.productId) : null;
+      if (!associatedProduct && primaryItem?.productId) {
+        try {
+          const pSnap = await getDoc(doc(db, 'products', primaryItem.productId));
+          if (pSnap.exists()) {
+            associatedProduct = { id: pSnap.id, ...pSnap.data() } as Product;
+          }
+        } catch (e) {
+          console.warn('Direct product fetch note:', e);
+        }
+      }
 
       // Determine delivery method
       const deliveryMethod =
         deliveryData?.deliveryMethod ||
+        (deliveryData?.externalAccessUrl ? 'external_link' : undefined) ||
+        ((deliveryData as any)?.externalAccessLink ? 'external_link' : undefined) ||
+        (associatedProduct?.externalAccessUrl ? 'external_link' : undefined) ||
+        ((associatedProduct as any)?.externalAccessLink ? 'external_link' : undefined) ||
         (associatedProduct?.downloadAccessType === 'external_link' ? 'external_link' : undefined) ||
         (associatedProduct?.downloadAccessType === 'credentials' ? 'credentials' : undefined) ||
-        (deliveryData?.externalAccessUrl ? 'external_link' : undefined) ||
-        'file';
+        'external_link';
 
-      const isExternalLink = deliveryMethod === 'external_link' || deliveryMethod === 'external';
+      const isExternalLink = deliveryMethod === 'external_link' || deliveryMethod === 'external' || deliveryMethod === 'link';
 
       // External link resolution (e.g. Google Drive URL)
       let externalAccessUrl: string | undefined = undefined;
       if (isExternalLink) {
         externalAccessUrl =
           deliveryData?.externalAccessUrl?.trim() ||
+          (deliveryData as any)?.externalAccessLink?.trim() ||
           deliveryData?.fileUrl?.trim() ||
+          deliveryData?.credentials?.trim() ||
           associatedProduct?.externalAccessUrl?.trim() ||
+          (associatedProduct as any)?.externalAccessLink?.trim() ||
           '';
       }
 
@@ -1600,6 +1616,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       const credentialsOrKey =
         deliveryData?.credentialsOrKey?.trim() ||
+        deliveryData?.credentials?.trim() ||
         associatedProduct?.variants?.[0]?.sampleKey ||
         '';
 
@@ -1613,7 +1630,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         const itemObj: Record<string, any> = {
           productId: item.productId,
           productTitle: item.productTitle || prod?.titleEn || 'Digital Product',
-          variantTitle: item.variantName || '',
+          variantTitle: item.variantName || (item as any).variantTitle || '',
           deliveryType: item.deliveryType || 'instant',
           credentialsOrKey: credentialsOrKey || 'Access granted. Thank you!',
           notes,
@@ -1621,9 +1638,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
         if (isExternalLink && externalAccessUrl) {
           itemObj.externalAccessUrl = externalAccessUrl;
+          itemObj.externalAccessLink = externalAccessUrl;
           itemObj.downloadUrl = externalAccessUrl;
+          itemObj.downloadLink = externalAccessUrl;
         } else if (downloadUrl) {
           itemObj.downloadUrl = downloadUrl;
+          itemObj.downloadLink = downloadUrl;
           if (fileName) itemObj.fileName = fileName;
           if (fileSize !== undefined) itemObj.fileSize = fileSize;
           if (storagePath) itemObj.storagePath = storagePath;
@@ -1646,15 +1666,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       // 2. Prepare Delivery Record Data
       const deliveryRecordPayload: Record<string, any> = {
         id: orderId,
+        deliveryId: orderId,
         orderId,
         userId: order.userId || '',
         customerName: order.customerName || 'Customer',
         customerEmail: order.customerEmail || '',
         customerPhone: order.customerPhone || '',
         productId: primaryItem ? primaryItem.productId : (associatedProduct?.id || ''),
-        productName: primaryItem ? primaryItem.productTitle : (associatedProduct?.titleEn || 'Digital Product'),
+        productTitle: primaryItem ? (primaryItem.productTitle || (primaryItem as any).productName) : (associatedProduct?.titleEn || 'Digital Product'),
+        productName: primaryItem ? (primaryItem.productTitle || (primaryItem as any).productName) : (associatedProduct?.titleEn || 'Digital Product'),
+        variantTitle: primaryItem?.variantName || (primaryItem as any)?.variantTitle || '',
+        deliveryType: isExternalLink ? 'link' : deliveryMethod,
         deliveryMethod,
         status: 'delivered',
+        createdAt: isAlreadyDelivered && existingData.createdAt ? existingData.createdAt : serverTimestamp(),
         deliveredAt: serverTimestamp(),
         deliveredAtIso: new Date().toISOString(),
         downloadCount: isAlreadyDelivered ? (existingData.downloadCount || 0) : 0,
@@ -1669,16 +1694,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       if (isExternalLink) {
         deliveryRecordPayload.externalAccessUrl = externalAccessUrl || '';
+        deliveryRecordPayload.externalAccessLink = externalAccessUrl || '';
+        deliveryRecordPayload.downloadLink = externalAccessUrl || '';
         deliveryRecordPayload.downloadUrl = externalAccessUrl || '';
       } else {
         if (fileName) deliveryRecordPayload.fileName = fileName;
         if (fileSize !== undefined) deliveryRecordPayload.fileSize = fileSize;
         if (storagePath) deliveryRecordPayload.storagePath = storagePath;
-        if (downloadUrl) deliveryRecordPayload.downloadUrl = downloadUrl;
+        if (downloadUrl) {
+          deliveryRecordPayload.downloadUrl = downloadUrl;
+          deliveryRecordPayload.downloadLink = downloadUrl;
+        }
       }
 
       if (credentialsOrKey) {
         deliveryRecordPayload.credentialsOrKey = credentialsOrKey;
+        deliveryRecordPayload.credentials = credentialsOrKey;
       }
 
       // Sanitize delivery record payload so NO undefined fields can ever reach Firestore
@@ -1712,8 +1743,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       showToast(
         lang === 'bn'
-          ? `অর্ডার #${orderId} সফলভাবে ডেলিভারি করা হয়েছে!`
-          : `Order #${orderId} delivered successfully!`,
+          ? 'ডেলিভারি সফল হয়েছে!'
+          : 'Delivery successful',
         'success'
       );
 

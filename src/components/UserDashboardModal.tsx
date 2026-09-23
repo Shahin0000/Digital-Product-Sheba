@@ -96,6 +96,7 @@ export const UserDashboardModal: React.FC = () => {
 
   const handleTicketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingTicket) return;
     if (!ticketSubject.trim() || !ticketMessage.trim()) {
       showToast(
         lang === 'bn' ? 'অনুগ্রহ করে বিষয় এবং বিস্তারিত মেসেজ লিখুন' : 'Please provide subject and message',
@@ -113,8 +114,10 @@ export const UserDashboardModal: React.FC = () => {
       setTicketSubject('');
       setTicketMessage('');
       setTicketOrder('');
-    } catch (err) {
+    } catch (err: unknown) {
       console.error('Complaint submit error:', err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      showToast(errMsg || (lang === 'bn' ? 'অভিযোগ জমা দিতে ব্যর্থ হয়েছে' : 'Failed to submit complaint'), 'error');
     } finally {
       setIsSubmittingTicket(false);
     }
@@ -427,17 +430,61 @@ export const UserDashboardModal: React.FC = () => {
                         )}
 
                         {/* External link if present */}
-                        {delivery?.downloadUrl && delivery.downloadUrl.startsWith('http') && !delivery.fileName && (
-                          <a
-                            href={delivery.downloadUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-400 hover:underline"
-                          >
-                            <ExternalLink className="w-3.5 h-3.5" />
-                            <span>Open Digital Access Link</span>
-                          </a>
-                        )}
+                        {(() => {
+                          const extLink =
+                            delivery?.externalAccessUrl ||
+                            (delivery as any)?.externalAccessLink ||
+                            delivery?.downloadLink ||
+                            delivery?.downloadUrl ||
+                            order.digitalDeliveries?.[0]?.externalAccessUrl ||
+                            (order.digitalDeliveries?.[0] as any)?.externalAccessLink ||
+                            order.digitalDeliveries?.[0]?.downloadLink ||
+                            order.digitalDeliveries?.[0]?.downloadUrl;
+
+                          if (extLink && extLink.startsWith('http') && !delivery?.fileName) {
+                            return (
+                              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+                                <div className="text-[10px] uppercase font-bold text-emerald-400">
+                                  {lang === 'bn' ? 'ডিজিটাল অ্যাক্সেস / ড্রাইভ লিংক' : 'Digital Access / Drive Link'}
+                                </div>
+                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
+                                  <span className="font-mono text-xs text-slate-200 truncate select-all">
+                                    {extLink}
+                                  </span>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleCopy(extLink)}
+                                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                    >
+                                      {copiedKey === extLink ? (
+                                        <>
+                                          <Check className="w-3 h-3 text-emerald-400" />
+                                          <span>{t.copied}</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Copy className="w-3 h-3" />
+                                          <span>{t.copyKey || 'Copy'}</span>
+                                        </>
+                                      )}
+                                    </button>
+                                    <a
+                                      href={extLink}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg inline-flex items-center gap-1.5 transition-colors shadow-xs"
+                                    >
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                      <span>{lang === 'bn' ? 'লিংক ওপেন করুন' : 'Open Link'}</span>
+                                    </a>
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
                     );
                   })

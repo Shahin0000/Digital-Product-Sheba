@@ -147,6 +147,10 @@ export const initialProducts: Product[] = [
     instructionsBn: 'অর্ডারের সময় আপনার ক্যানভা জিমেইল দিন। অর্ডার পেজে দেওয়া লিংকে ক্লিক করে আপনার পার্সোনাল টিম জয়েন করুন।',
     featured: true,
     trending: true,
+    isDigitalProduct: true,
+    downloadAccessType: 'external_link',
+    externalAccessUrl: 'https://drive.google.com/drive/folders/1DPS-CanvaPro-VIP-Access-Key',
+    externalAccessLink: 'https://drive.google.com/drive/folders/1DPS-CanvaPro-VIP-Access-Key',
     variants: [
       {
         id: 'canva-1y',

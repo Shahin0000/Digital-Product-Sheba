@@ -396,6 +396,7 @@ export const AdminProductFormModal: React.FC<AdminProductFormModalProps> = ({
       digitalFileStoragePath: digitalFileStoragePath.trim() || '',
       digitalFileUrl: digitalFileUrl.trim() || '',
       externalAccessUrl: cleanExternalUrl,
+      externalAccessLink: cleanExternalUrl,
     };
 
     // Strip any possible undefined values so Firestore will never reject

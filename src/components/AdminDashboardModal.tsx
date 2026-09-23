@@ -222,71 +222,136 @@ export const AdminDashboardModal: React.FC = () => {
   const handleOpenDeliveryModal = (order: Order) => {
     setSelectedOrderForDelivery(order);
     const existing = deliveries[order.id];
+    const primaryItem = order.items && order.items.length > 0 ? order.items[0] : null;
+    const prod = products.find((p) => p.id === primaryItem?.productId);
+    const matchedVariant = prod?.variants?.find((v) => v.id === primaryItem?.variantId);
+
+    // Retrieve the product's existing: External Access Link (e.g. Google Drive URL)
+    const productExternalLink = (
+      prod?.externalAccessUrl ||
+      (prod as any)?.externalAccessLink ||
+      (prod as any)?.downloadLink ||
+      ''
+    ).trim();
+
     if (existing) {
-      setDeliveryMode(
-        (existing.deliveryType as 'credentials' | 'file' | 'license_key' | 'link') || 'credentials'
-      );
-      setDeliveryContentInput(
-        existing.credentials || existing.downloadUrl || existing.licenseKey || ''
-      );
-      setDeliveryNotesInput(existing.adminNotes || '');
+      const existingLink =
+        existing.externalAccessUrl ||
+        (existing as any)?.externalAccessLink ||
+        existing.downloadLink ||
+        existing.downloadUrl ||
+        '';
+
+      if (existingLink) {
+        setDeliveryMode('link');
+        setDeliveryContentInput(existingLink);
+      } else {
+        setDeliveryMode(
+          (existing.deliveryType as 'credentials' | 'file' | 'license_key' | 'link') || 'credentials'
+        );
+        setDeliveryContentInput(
+          existing.credentialsOrKey || existing.credentials || existing.licenseKey || ''
+        );
+      }
+      setDeliveryNotesInput(existing.notes || existing.adminNotes || '');
     } else {
-      const prod = products.find((p) => p.id === order.items[0]?.productId);
-      if (prod?.downloadAccessType === 'credentials') setDeliveryMode('credentials');
-      else if (prod?.downloadAccessType === 'external_link') setDeliveryMode('link');
-      else setDeliveryMode('credentials');
-      setDeliveryContentInput('');
-      setDeliveryNotesInput('');
+      // 1. If product has an External Access Link, automatically populate it
+      if (productExternalLink) {
+        setDeliveryMode('link');
+        setDeliveryContentInput(productExternalLink);
+      } else if (prod?.downloadAccessType === 'external_link') {
+        setDeliveryMode('link');
+        setDeliveryContentInput('');
+        showToast(
+          lang === 'bn'
+            ? 'এই প্রোডাক্টের External Access Link দেওয়া হয়নি।'
+            : 'No External Access Link configured for this product.',
+          'info'
+        );
+      } else if (matchedVariant?.sampleKey) {
+        setDeliveryMode('credentials');
+        setDeliveryContentInput(matchedVariant.sampleKey);
+      } else if (prod?.digitalFileUrl) {
+        setDeliveryMode('file');
+        setDeliveryContentInput(prod.digitalFileUrl);
+      } else {
+        setDeliveryMode('link');
+        setDeliveryContentInput('');
+        showToast(
+          lang === 'bn'
+            ? 'এই প্রোডাক্টের External Access Link দেওয়া হয়নি।'
+            : 'No External Access Link configured for this product.',
+          'info'
+        );
+      }
+      setDeliveryNotesInput(
+        lang === 'bn'
+          ? 'Digital Product Sheba থেকে সফলভাবে ডেলিভারি করা হয়েছে।'
+          : 'Delivered securely by Digital Product Sheba.'
+      );
     }
   };
 
   const handleSaveDeliverySubmit = async () => {
     if (!selectedOrderForDelivery) return;
-    if (!deliveryContentInput.trim()) {
-      showToast(lang === 'bn' ? 'ডেলিভারি কনটেন্ট প্রদান করুন' : 'Please provide delivery content', 'error');
+
+    // 1. Validate that the customer/order exists
+    if (!selectedOrderForDelivery.id) {
+      showToast(lang === 'bn' ? 'অর্ডার তথ্য সঠিক নয়' : 'Order information invalid', 'error');
+      return;
+    }
+
+    const primaryItem = selectedOrderForDelivery.items && selectedOrderForDelivery.items.length > 0
+      ? selectedOrderForDelivery.items[0]
+      : null;
+
+    // 2. Validate that an External Access Link / delivery content exists
+    const cleanContent = deliveryContentInput.trim();
+    if (!cleanContent) {
+      showToast(
+        lang === 'bn'
+          ? 'এই প্রোডাক্টের External Access Link দেওয়া হয়নি।'
+          : 'No External Access Link provided for this product.',
+        'error'
+      );
       return;
     }
 
     try {
-      const primaryItem = selectedOrderForDelivery.items[0];
+      // 3. deliverOrder handles:
+      // - Updating orders/{orderId} status to 'delivered' and digitalDeliveries
+      // - Creating/updating deliveries/{deliveryId} with correct fields
+      // - Dispatching notifications
+      // - Refreshing order list and delivery list
+      // - Showing 'Delivery successful'
       await deliverOrder(
         selectedOrderForDelivery.id,
-        deliveryMode === 'file'
+        deliveryMode === 'link'
           ? {
+              deliveryMethod: 'external_link',
+              externalAccessUrl: cleanContent,
+              notes: deliveryNotesInput.trim(),
+            }
+          : deliveryMode === 'file'
+          ? {
+              deliveryMethod: 'file',
               fileName: `${primaryItem?.productTitle || 'Digital-Item'}.zip`,
-              fileUrl: deliveryContentInput.trim(),
-              notes: deliveryNotesInput,
+              fileUrl: cleanContent,
+              notes: deliveryNotesInput.trim(),
             }
           : {
-              credentials: deliveryContentInput.trim(),
-              notes: deliveryNotesInput,
+              deliveryMethod: 'credentials',
+              credentials: cleanContent,
+              credentialsOrKey: cleanContent,
+              notes: deliveryNotesInput.trim(),
             }
       );
 
-      await saveDeliveryRecord({
-        orderId: selectedOrderForDelivery.id,
-        userId: selectedOrderForDelivery.userId,
-        productId: primaryItem?.productId || '',
-        productTitle: primaryItem?.productTitle || 'Digital Product',
-        deliveryType: deliveryMode,
-        credentials: deliveryMode === 'credentials' ? deliveryContentInput.trim() : undefined,
-        downloadUrl: deliveryMode === 'link' || deliveryMode === 'file' ? deliveryContentInput.trim() : undefined,
-        licenseKey: deliveryMode === 'license_key' ? deliveryContentInput.trim() : undefined,
-        adminNotes: deliveryNotesInput.trim(),
-        status: 'delivered',
-        deliveredAt: new Date().toISOString(),
-      });
-
       setSelectedOrderForDelivery(null);
-      showToast(
-        lang === 'bn'
-          ? `অর্ডার #${selectedOrderForDelivery.orderId || selectedOrderForDelivery.id} সফলভাবে ডেলিভারি করা হয়েছে!`
-          : `Order #${selectedOrderForDelivery.orderId || selectedOrderForDelivery.id} delivered successfully!`,
-        'success'
-      );
     } catch (err) {
       console.error('Error delivering order:', err);
-      showToast(lang === 'bn' ? 'ডেলিভারি ব্যর্থ হয়েছে' : 'Delivery failed', 'error');
+      const msg = err instanceof Error ? err.message : String(err);
+      showToast(msg || (lang === 'bn' ? 'ডেলিভারি ব্যর্থ হয়েছে' : 'Delivery failed'), 'error');
     }
   };
 
@@ -2275,10 +2340,52 @@ export const AdminDashboardModal: React.FC = () => {
               </button>
             </div>
 
-            <div className="text-xs text-slate-300">
-              Delivering to: <span className="font-semibold text-white">{selectedOrderForDelivery.customerName}</span> (
-              {selectedOrderForDelivery.customerPhone})
-            </div>
+            {(() => {
+              const primaryItem = selectedOrderForDelivery.items && selectedOrderForDelivery.items.length > 0
+                ? selectedOrderForDelivery.items[0]
+                : null;
+              const prod = products.find((p) => p.id === primaryItem?.productId);
+              const matchedVariant = prod?.variants?.find((v) => v.id === primaryItem?.variantId);
+              const hasContent = Boolean(deliveryContentInput.trim());
+
+              return (
+                <div className="space-y-3">
+                  <div className="bg-slate-800/90 p-3 rounded-xl border border-slate-700 space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Customer:</span>
+                      <span className="font-semibold text-white">
+                        {selectedOrderForDelivery.customerName} ({selectedOrderForDelivery.customerPhone})
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-400">Product:</span>
+                      <span className="font-bold text-emerald-400">
+                        {primaryItem?.productTitle || (primaryItem as any)?.productName || prod?.titleEn || 'Digital Product'}
+                      </span>
+                    </div>
+                    {(primaryItem?.variantName || matchedVariant?.nameEn) && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-400">Variant:</span>
+                        <span className="font-medium text-slate-200">
+                          {primaryItem?.variantName || matchedVariant?.nameEn}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+
+                  {!hasContent && (
+                    <div className="p-2.5 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-300 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+                      <span>
+                        {lang === 'bn'
+                          ? 'এই প্রোডাক্টের External Access Link দেওয়া হয়নি।'
+                          : 'No External Access Link configured for this product.'}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Delivery Type */}
             <div>

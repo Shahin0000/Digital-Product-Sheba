@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   X,
   Package,
   Key,
   ShieldCheck,
-  User,
+  User as UserIcon,
   Clock,
   CheckCircle2,
   Copy,
@@ -19,8 +19,11 @@ import {
   RefreshCw,
   AlertCircle,
   FileText,
+  MessageSquare,
+  Edit2,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
+import { ComplaintStatus } from '../types';
 
 export const UserDashboardModal: React.FC = () => {
   const {
@@ -30,6 +33,9 @@ export const UserDashboardModal: React.FC = () => {
     orders,
     deliveries,
     requestSecureDownload,
+    complaints,
+    submitComplaint,
+    updateCustomerProfile,
     showToast,
     lang,
     t,
@@ -39,10 +45,24 @@ export const UserDashboardModal: React.FC = () => {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [downloadingOrderId, setDownloadingOrderId] = useState<string | null>(null);
 
-  // Support ticket form
+  // Support complaint form
   const [ticketOrder, setTicketOrder] = useState('');
   const [ticketSubject, setTicketSubject] = useState('');
   const [ticketMessage, setTicketMessage] = useState('');
+  const [isSubmittingTicket, setIsSubmittingTicket] = useState(false);
+
+  // Profile editing
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editName, setEditName] = useState(currentUser?.name || '');
+  const [editPhone, setEditPhone] = useState(currentUser?.phone || '');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  useEffect(() => {
+    if (currentUser) {
+      setEditName(currentUser.name);
+      setEditPhone(currentUser.phone || '');
+    }
+  }, [currentUser]);
 
   if (!isUserDashboardOpen || !currentUser) return null;
 
@@ -54,6 +74,9 @@ export const UserDashboardModal: React.FC = () => {
       (currentUser.phone && o.customerPhone === currentUser.phone) ||
       currentUser.role === 'admin'
   );
+
+  // Filter complaints for this user
+  const myComplaints = complaints.filter((c) => c.userId === currentUser.id);
 
   const handleCopy = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -71,13 +94,81 @@ export const UserDashboardModal: React.FC = () => {
     }
   };
 
-  const handleTicketSubmit = (e: React.FormEvent) => {
+  const handleTicketSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!ticketSubject || !ticketMessage) return;
-    showToast(t.ticketSubmitted, 'success');
-    setTicketSubject('');
-    setTicketMessage('');
-    setTicketOrder('');
+    if (!ticketSubject.trim() || !ticketMessage.trim()) {
+      showToast(
+        lang === 'bn' ? 'অনুগ্রহ করে বিষয় এবং বিস্তারিত মেসেজ লিখুন' : 'Please provide subject and message',
+        'error'
+      );
+      return;
+    }
+    setIsSubmittingTicket(true);
+    try {
+      await submitComplaint({
+        subject: ticketSubject.trim(),
+        message: ticketMessage.trim(),
+        orderId: ticketOrder.trim() || undefined,
+      });
+      setTicketSubject('');
+      setTicketMessage('');
+      setTicketOrder('');
+    } catch (err) {
+      console.error('Complaint submit error:', err);
+    } finally {
+      setIsSubmittingTicket(false);
+    }
+  };
+
+  const handleSaveProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editName.trim()) {
+      showToast(lang === 'bn' ? 'নাম খালি রাখা যাবে না' : 'Name cannot be empty', 'error');
+      return;
+    }
+    setIsSavingProfile(true);
+    try {
+      await updateCustomerProfile({
+        name: editName.trim(),
+        phone: editPhone.trim(),
+      });
+      setIsEditingProfile(false);
+    } catch (err) {
+      console.error('Profile update error:', err);
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  const getStatusBadge = (status: ComplaintStatus) => {
+    switch (status) {
+      case 'pending':
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+            ⏳ {lang === 'bn' ? 'অপেক্ষমাণ' : 'Pending'}
+          </span>
+        );
+      case 'in_progress':
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-300">
+            ⚙️ {lang === 'bn' ? 'প্রক্রিয়াধীন' : 'In Progress'}
+          </span>
+        );
+      case 'resolved':
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+            ✅ {lang === 'bn' ? 'সমাধানকৃত' : 'Resolved'}
+          </span>
+        );
+      case 'closed':
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-700 border border-gray-300">
+            🔒 {lang === 'bn' ? 'বন্ধ' : 'Closed'}
+          </span>
+        );
+      default:
+        return null;
+    }
   };
 
   return (
@@ -89,11 +180,16 @@ export const UserDashboardModal: React.FC = () => {
         {/* Header */}
         <div className="p-4 sm:p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/80 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg">
-              {currentUser.name.charAt(0)}
+            <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg shadow-xs">
+              {currentUser.name.charAt(0).toUpperCase()}
             </div>
             <div>
-              <h2 className="text-base sm:text-lg font-black text-gray-900">{t.dashboard}</h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-black text-gray-900">{t.dashboard}</h2>
+                <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                  {currentUser.role}
+                </span>
+              </div>
               <p className="text-xs text-gray-500">
                 {currentUser.name} ({currentUser.email})
               </p>
@@ -102,7 +198,7 @@ export const UserDashboardModal: React.FC = () => {
 
           <button
             onClick={() => setIsUserDashboardOpen(false)}
-            className="p-1.5 text-gray-400 hover:text-gray-700 rounded-lg cursor-pointer"
+            className="p-1.5 text-gray-400 hover:text-gray-700 rounded-lg cursor-pointer transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -120,7 +216,7 @@ export const UserDashboardModal: React.FC = () => {
           >
             <Package className="w-4 h-4" />
             <span>{t.myOrders}</span>
-            <span className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded-full">
+            <span className="bg-gray-100 text-gray-600 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
               {myOrders.length}
             </span>
           </button>
@@ -146,7 +242,12 @@ export const UserDashboardModal: React.FC = () => {
             }`}
           >
             <LifeBuoy className="w-4 h-4" />
-            <span>{t.supportTicket}</span>
+            <span>{lang === 'bn' ? 'অভিযোগ ও ওয়ারেন্টি সাপোর্ট' : 'Complaints & Support'}</span>
+            {myComplaints.length > 0 && (
+              <span className="bg-emerald-100 text-emerald-800 text-[10px] px-1.5 py-0.5 rounded-full font-mono font-bold">
+                {myComplaints.length}
+              </span>
+            )}
           </button>
 
           <button
@@ -157,7 +258,7 @@ export const UserDashboardModal: React.FC = () => {
                 : 'border-transparent text-gray-500 hover:text-gray-900'
             }`}
           >
-            <User className="w-4 h-4" />
+            <UserIcon className="w-4 h-4" />
             <span>{t.profile}</span>
           </button>
         </div>
@@ -178,204 +279,69 @@ export const UserDashboardModal: React.FC = () => {
                 myOrders.map((order) => {
                   const delivery = deliveries[order.id];
                   const isDelivered = order.status === 'delivered' || order.status === 'completed';
-                  const keyText =
-                    delivery?.credentialsOrKey ||
-                    order.digitalDeliveries?.[0]?.credentialsOrKey ||
-                    '';
-
-                  const accessUrl =
-                    delivery?.externalAccessUrl ||
-                    (delivery?.deliveryMethod === 'external_link' ? delivery.downloadUrl : undefined) ||
-                    order.digitalDeliveries?.[0]?.externalAccessUrl ||
-                    (delivery?.downloadUrl?.includes('drive.google.com') ? delivery.downloadUrl : undefined) ||
-                    (order.digitalDeliveries?.[0]?.downloadUrl?.includes('drive.google.com') ? order.digitalDeliveries?.[0]?.downloadUrl : undefined);
-
-                  const isFileDelivery =
-                    !accessUrl &&
-                    (delivery?.deliveryMethod === 'file' ||
-                      delivery?.fileName ||
-                      delivery?.storagePath ||
-                      (delivery?.downloadUrl && !delivery.downloadUrl.includes('drive.google.com')));
 
                   return (
                     <div
                       key={order.id}
-                      className="p-4 bg-gray-50 rounded-2xl border border-gray-200 space-y-3"
+                      className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3 hover:border-gray-300 transition-colors"
                     >
-                      <div className="flex items-center justify-between">
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 pb-2">
                         <div>
-                          <span className="text-xs font-black text-gray-900 font-mono">
-                            #{order.id}
+                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block">
+                            Order ID
                           </span>
-                          <span className="text-[11px] text-gray-400 block">
-                            {new Date(order.createdAt).toLocaleDateString()}
+                          <span className="text-xs font-black text-gray-900 font-mono">
+                            #{order.orderId || order.id}
                           </span>
                         </div>
 
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-xs font-bold capitalize ${
-                            isDelivered
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : order.status === 'verifying'
-                              ? 'bg-amber-100 text-amber-800'
-                              : order.status === 'processing'
-                              ? 'bg-blue-100 text-blue-800'
-                              : order.status === 'cancelled'
-                              ? 'bg-rose-100 text-rose-800'
-                              : 'bg-gray-200 text-gray-800'
-                          }`}
-                        >
-                          {isDelivered
-                            ? (lang === 'bn' ? 'ডেলিভার্ড' : 'Delivered')
-                            : order.status === 'verifying'
-                            ? t.statusVerifying
-                            : order.status === 'processing'
-                            ? t.statusProcessing
-                            : order.status}
-                        </span>
+                        <div className="text-right">
+                          <span className="text-[10px] text-gray-400 block">
+                            {order.createdAt ? new Date(order.createdAt).toLocaleDateString() : 'Recent'}
+                          </span>
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                              isDelivered
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : order.status === 'processing'
+                                ? 'bg-indigo-100 text-indigo-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {order.status}
+                          </span>
+                        </div>
                       </div>
 
                       {/* Items */}
-                      <div className="space-y-1 border-t border-gray-200/60 pt-2">
+                      <div className="space-y-2">
                         {order.items.map((item, idx) => (
-                          <div key={idx} className="flex justify-between text-xs text-gray-700">
-                            <span>
-                              {item.productTitle} -{' '}
-                              <span className="text-emerald-600 font-semibold">
-                                {item.variantName}
-                              </span>
+                          <div key={idx} className="flex justify-between items-center text-xs">
+                            <span className="text-gray-800 font-medium">
+                              {item.productTitle || item.productName} ({item.variantName}) x {item.quantity}
                             </span>
-                            <span className="font-bold">৳{item.unitPrice * item.quantity}</span>
+                            <span className="font-bold text-gray-900">
+                              ৳{item.unitPrice || item.price}
+                            </span>
                           </div>
                         ))}
                       </div>
 
-                      {/* Payment and Trx Info */}
-                      <div className="flex justify-between items-center text-xs text-gray-500 pt-2 border-t border-gray-200/60">
-                        <span>
-                          {order.paymentMethod.toUpperCase()} | TrxID: {order.trxId}
-                        </span>
-                        <span className="font-black text-gray-900 text-sm">৳{order.totalAmount}</span>
+                      <div className="flex justify-between items-center pt-2 border-t border-gray-200 text-xs">
+                        <span className="text-gray-500 font-medium">Total Paid:</span>
+                        <span className="font-black text-emerald-700">৳{order.totalAmount}</span>
                       </div>
 
-                      {/* Digital Product Delivery Action Box */}
+                      {/* Quick access action */}
                       {isDelivered && (
-                        <div className="bg-emerald-50 rounded-xl p-3.5 border border-emerald-200 space-y-2.5 mt-2 animate-in fade-in">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2">
-                              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                              <span className="text-xs font-black text-emerald-950">
-                                {lang === 'bn' ? 'ডিজিটাল প্রোডাক্ট ডেলিভারি সম্পন্ন' : 'Digital Product Ready for Download'}
-                              </span>
-                            </div>
-                            <span className="text-[10px] bg-emerald-200/70 text-emerald-900 font-bold px-2 py-0.5 rounded-full">
-                              Verified
-                            </span>
-                          </div>
-
-                          {/* Option 1: File Download */}
-                          {isFileDelivery && (
-                            <div className="bg-white p-3 rounded-lg border border-emerald-200/70 flex flex-wrap items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <FileArchive className="w-4 h-4 text-emerald-600 shrink-0" />
-                                  <span className="text-xs font-bold text-gray-900 truncate">
-                                    {delivery?.fileName || 'Product Download Package'}
-                                  </span>
-                                </div>
-                                {delivery?.fileSize && (
-                                  <span className="text-[10px] text-gray-500 block">
-                                    Size: {(delivery.fileSize / (1024 * 1024)).toFixed(1)} MB • {delivery.downloadCount || 0} / {delivery.downloadLimit || 5} downloads
-                                  </span>
-                                )}
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => handleDownload(order.id)}
-                                disabled={downloadingOrderId === order.id}
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg cursor-pointer flex items-center gap-1.5 shadow-xs transition-colors disabled:opacity-50"
-                              >
-                                {downloadingOrderId === order.id ? (
-                                  <>
-                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                    <span>Generating Link...</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    <Download className="w-3.5 h-3.5" />
-                                    <span>{lang === 'bn' ? 'ফাইল ডাউনলোড করুন' : 'Download Product'}</span>
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          )}
-
-                          {/* Option 2: Credentials / License Keys */}
-                          {keyText && (
-                            <div className="space-y-1">
-                              <div className="flex items-center justify-between text-[11px]">
-                                <span className="font-bold text-gray-700 flex items-center gap-1">
-                                  <Key className="w-3.5 h-3.5 text-amber-600" />
-                                  <span>{lang === 'bn' ? 'অ্যাকাউন্ট / লাইসেন্স কি:' : 'Account / License Key:'}</span>
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => handleCopy(keyText)}
-                                  className="text-emerald-700 hover:text-emerald-800 font-bold flex items-center gap-1 cursor-pointer text-[11px]"
-                                >
-                                  {copiedKey === keyText ? (
-                                    <>
-                                      <Check className="w-3 h-3" />
-                                      <span>{t.copied}</span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Copy className="w-3 h-3" />
-                                      <span>{t.copyKey}</span>
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-                              <div className="p-2.5 bg-slate-900 text-amber-300 font-mono text-xs rounded-lg select-all break-all whitespace-pre-wrap">
-                                {keyText}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Option 3: External Access URL */}
-                          {accessUrl && accessUrl.startsWith('http') && (
-                            <div className="bg-white p-3 rounded-lg border border-emerald-200/70 flex flex-wrap items-center justify-between gap-2">
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-1.5">
-                                  <ExternalLink className="w-4 h-4 text-emerald-600 shrink-0" />
-                                  <span className="text-xs font-bold text-gray-900 truncate">
-                                    {lang === 'bn' ? 'এক্সটার্নাল ড্রাইভ / অ্যাক্সেস লিঙ্ক' : 'External Drive / Access Link'}
-                                  </span>
-                                </div>
-                                <span className="text-[10px] text-gray-500 block truncate max-w-xs sm:max-w-sm font-mono">
-                                  {accessUrl}
-                                </span>
-                              </div>
-
-                              <a
-                                href={accessUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg cursor-pointer inline-flex items-center gap-1.5 shadow-xs transition-colors"
-                              >
-                                <ExternalLink className="w-3.5 h-3.5" />
-                                <span>{lang === 'bn' ? 'ড্রাইভ / লিঙ্ক খুলুন' : 'Open Access Link'}</span>
-                              </a>
-                            </div>
-                          )}
-
-                          {/* Delivery Notes */}
-                          {delivery?.notes && (
-                            <p className="text-[11px] text-gray-600 italic bg-emerald-100/50 p-2 rounded-lg">
-                              Note: {delivery.notes}
-                            </p>
-                          )}
+                        <div className="pt-1 flex gap-2">
+                          <button
+                            onClick={() => setActiveTab('keys')}
+                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs"
+                          >
+                            <Key className="w-3.5 h-3.5" />
+                            <span>View Credentials / Key</span>
+                          </button>
                         </div>
                       )}
                     </div>
@@ -385,58 +351,48 @@ export const UserDashboardModal: React.FC = () => {
             </div>
           )}
 
-          {/* TAB 2: MY DIGITAL KEYS & DOWNLOADS */}
+          {/* TAB 2: DIGITAL ACCESS & KEYS */}
           {activeTab === 'keys' && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               {myOrders.filter((o) => o.status === 'delivered' || o.status === 'completed').length === 0 ? (
                 <div className="text-center py-12 text-gray-400">
-                  <DownloadCloud className="w-12 h-12 mx-auto mb-2 opacity-40" />
+                  <Key className="w-12 h-12 mx-auto mb-2 opacity-40" />
                   <p className="text-xs font-bold">
                     {lang === 'bn'
-                      ? 'অর্ডার অনুমোদনের পর ডিজিটাল ফাইল ও অ্যাক্সেস কি এখানে পাওয়া যাবে।'
-                      : 'Digital products and download files will appear here once orders are delivered.'}
+                      ? 'এখনো কোনো ডিজিটাল ডেলিভারি সম্পন্ন হয়নি।'
+                      : 'No delivered keys or credentials found yet.'}
                   </p>
                 </div>
               ) : (
                 myOrders
                   .filter((o) => o.status === 'delivered' || o.status === 'completed')
-                  .map((o) => {
-                    const delivery = deliveries[o.id];
+                  .map((order) => {
+                    const delivery = deliveries[order.id];
                     const keyText =
+                      delivery?.credentials ||
+                      delivery?.licenseKey ||
                       delivery?.credentialsOrKey ||
-                      o.digitalDeliveries?.[0]?.credentialsOrKey ||
+                      order.digitalDeliveries?.[0]?.credentialsOrKey ||
+                      order.deliveryNotes ||
                       '';
 
                     return (
                       <div
-                        key={o.id}
-                        className="p-4 bg-slate-900 text-white rounded-2xl border border-slate-800 space-y-3"
+                        key={order.id}
+                        className="bg-slate-900 text-white p-4 sm:p-5 rounded-2xl space-y-3 border border-slate-800 shadow-md"
                       >
-                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2.5">
+                        <div className="flex items-center justify-between">
                           <div>
-                            <span className="text-xs font-bold text-emerald-400 block">
-                              {o.items.map((i) => i.productTitle).join(', ')}
+                            <span className="text-[10px] text-emerald-400 font-mono font-bold block uppercase">
+                              Order #{order.orderId || order.id}
                             </span>
-                            <span className="text-[10px] text-gray-400">
-                              Order #{o.id} • {new Date(o.createdAt).toLocaleDateString()}
-                            </span>
+                            <h4 className="text-sm font-bold text-white">
+                              {order.items[0]?.productTitle || order.items[0]?.productName}
+                            </h4>
                           </div>
-
-                          {(delivery?.fileName || delivery?.storagePath || delivery?.downloadUrl) && (
-                            <button
-                              type="button"
-                              onClick={() => handleDownload(o.id)}
-                              disabled={downloadingOrderId === o.id}
-                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors shadow-xs"
-                            >
-                              {downloadingOrderId === o.id ? (
-                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                              ) : (
-                                <Download className="w-3.5 h-3.5" />
-                              )}
-                              <span>Download File</span>
-                            </button>
-                          )}
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            Delivered
+                          </span>
                         </div>
 
                         {/* License / Credentials Display */}
@@ -489,88 +445,309 @@ export const UserDashboardModal: React.FC = () => {
             </div>
           )}
 
-          {/* TAB 3: WARRANTY CLAIM / SUPPORT */}
+          {/* TAB 3: WARRANTY CLAIM / COMPLAINTS */}
           {activeTab === 'support' && (
-            <form onSubmit={handleTicketSubmit} className="space-y-4">
-              <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100 text-xs text-emerald-800 flex items-center gap-2">
-                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                <span>
-                  {lang === 'bn'
-                    ? '১০০% রিপ্লেসমেন্ট ওয়ারেন্টি: অ্যাকাউন্টে কোনো সমস্যা হলে আমাদের দ্রুত জানান।'
-                    : '100% Replacement Warranty: Submit your ticket for fast resolution.'}
-                </span>
+            <div className="space-y-6">
+              {/* Complaint Submission Form */}
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-2xs space-y-4">
+                <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100 text-xs text-emerald-800 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>
+                    {lang === 'bn'
+                      ? '১০০% রিপ্লেসমেন্ট ওয়ারেন্টি ও কমপ্লেইন বক্স: যেকোনো সমস্যায় আমাদের জানান, অ্যাডমিন টিম সরাসরি সমাধান দেবে।'
+                      : '100% Replacement Warranty & Support Ticket: Submit your complaint for fast resolution.'}
+                  </span>
+                </div>
+
+                <form onSubmit={handleTicketSubmit} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-700 block mb-1">
+                      {lang === 'bn' ? 'অর্ডার নম্বর (ঐচ্ছিক)' : 'Linked Order ID (Optional)'}
+                    </label>
+                    {myOrders.length > 0 ? (
+                      <select
+                        value={ticketOrder}
+                        onChange={(e) => setTicketOrder(e.target.value)}
+                        className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:border-emerald-600"
+                      >
+                        <option value="">
+                          {lang === 'bn' ? '-- অর্ডার সিলেক্ট করুন বা খালি রাখুন --' : '-- Select Order or Leave Blank --'}
+                        </option>
+                        {myOrders.map((o) => (
+                          <option key={o.id} value={o.orderId || o.id}>
+                            #{o.orderId || o.id} - {o.items[0]?.productTitle || 'Digital Item'} (৳{o.totalAmount})
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={ticketOrder}
+                        onChange={(e) => setTicketOrder(e.target.value)}
+                        placeholder="e.g. DPS-84921"
+                        className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:border-emerald-600 font-mono uppercase"
+                      />
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-700 block mb-1">
+                      {lang === 'bn' ? 'অভিযোগের বিষয়' : 'Complaint Subject / Issue'} *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={ticketSubject}
+                      onChange={(e) => setTicketSubject(e.target.value)}
+                      placeholder={
+                        lang === 'bn'
+                          ? 'যেমন: নেটফ্লিক্স প্রোফাইল পাসওয়ার্ড কাজ করছে না বা ক্যানভা ইনভাইট লিংক মেয়াদোত্তীর্ণ'
+                          : 'e.g. Netflix PIN expired or Canva invite link invalid'
+                      }
+                      className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-700 block mb-1">
+                      {lang === 'bn' ? 'বিস্তারিত অভিযোগ / মেসেজ' : 'Detailed Complaint / Message'} *
+                    </label>
+                    <textarea
+                      required
+                      rows={3}
+                      value={ticketMessage}
+                      onChange={(e) => setTicketMessage(e.target.value)}
+                      placeholder={
+                        lang === 'bn'
+                          ? 'আপনার অ্যাকাউন্টের সমস্যা বিস্তারিত লিখুন (এরর মেসেজ, স্ক্রিনশটের বিবরণ ইত্যাদি)...'
+                          : 'Describe the issue encountered with details...'
+                      }
+                      className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSubmittingTicket}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-xs"
+                  >
+                    <Send className="w-4 h-4" />
+                    <span>
+                      {isSubmittingTicket
+                        ? lang === 'bn'
+                          ? 'জমা হচ্ছে...'
+                          : 'Submitting...'
+                        : lang === 'bn'
+                        ? 'অভিযোগ জমা দিন'
+                        : 'Submit Complaint'}
+                    </span>
+                  </button>
+                </form>
               </div>
 
-              <div>
-                <label className="text-[11px] font-bold text-gray-600 block mb-1">
-                  {lang === 'bn' ? 'অর্ডার নম্বর (ঐচ্ছিক)' : 'Linked Order ID (Optional)'}
-                </label>
-                <input
-                  type="text"
-                  value={ticketOrder}
-                  onChange={(e) => setTicketOrder(e.target.value)}
-                  placeholder="e.g. DPS-84921"
-                  className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:border-emerald-600 font-mono uppercase"
-                />
-              </div>
+              {/* Customer's Existing Complaints List */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-gray-900 uppercase tracking-wider flex items-center gap-1.5">
+                    <MessageSquare className="w-4 h-4 text-emerald-600" />
+                    <span>{lang === 'bn' ? 'আমার অভিযোগসমূহ' : 'My Complaints & Replies'}</span>
+                  </h3>
+                  <span className="text-[11px] text-gray-500 font-mono font-bold">
+                    {myComplaints.length} Total
+                  </span>
+                </div>
 
-              <div>
-                <label className="text-[11px] font-bold text-gray-600 block mb-1">
-                  {lang === 'bn' ? 'সমস্যার বিষয়' : 'Subject / Issue'} *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={ticketSubject}
-                  onChange={(e) => setTicketSubject(e.target.value)}
-                  placeholder="e.g. Netflix profile PIN expired or Canva invite link expired"
-                  className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:border-emerald-600"
-                />
-              </div>
+                {myComplaints.length === 0 ? (
+                  <div className="text-center py-8 bg-gray-50 rounded-2xl border border-gray-200 text-gray-400">
+                    <CheckCircle2 className="w-8 h-8 mx-auto mb-1 text-gray-300" />
+                    <p className="text-xs font-medium">
+                      {lang === 'bn'
+                        ? 'আপনার কোনো সক্রিয় অভিযোগ নেই।'
+                        : 'You have not submitted any complaints.'}
+                    </p>
+                  </div>
+                ) : (
+                  myComplaints.map((c) => (
+                    <div
+                      key={c.id}
+                      className="bg-white p-4 rounded-2xl border border-gray-200 shadow-2xs space-y-3"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 pb-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-xs font-bold text-gray-900">
+                            #{c.id}
+                          </span>
+                          {c.orderId && (
+                            <span className="text-[10px] font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded-md">
+                              Order: #{c.orderId}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[10px] text-gray-400">
+                            {new Date(c.createdAt).toLocaleDateString()}
+                          </span>
+                          {getStatusBadge(c.status)}
+                        </div>
+                      </div>
 
-              <div>
-                <label className="text-[11px] font-bold text-gray-600 block mb-1">
-                  {lang === 'bn' ? 'বিস্তারিত লিখুন' : 'Detailed Message'} *
-                </label>
-                <textarea
-                  required
-                  rows={3}
-                  value={ticketMessage}
-                  onChange={(e) => setTicketMessage(e.target.value)}
-                  placeholder="Describe your issue with error screenshot details..."
-                  className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl outline-hidden focus:border-emerald-600"
-                />
-              </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-gray-900 mb-1">{c.subject}</h4>
+                        <p className="text-xs text-gray-600 leading-relaxed whitespace-pre-wrap bg-gray-50 p-2.5 rounded-xl border border-gray-100">
+                          {c.message}
+                        </p>
+                      </div>
 
-              <button
-                type="submit"
-                className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer transition-colors"
-              >
-                <Send className="w-4 h-4" />
-                <span>{t.submitTicket}</span>
-              </button>
-            </form>
+                      {/* Official Admin Reply */}
+                      {c.adminReply ? (
+                        <div className="mt-3 p-3.5 bg-emerald-50/90 rounded-xl border border-emerald-200 text-xs text-emerald-950 space-y-1">
+                          <div className="flex items-center justify-between">
+                            <span className="font-bold flex items-center gap-1.5 text-emerald-800 text-[11px]">
+                              <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                              <span>{lang === 'bn' ? 'অ্যাডমিন রিপ্লাই' : 'Admin Response'}</span>
+                            </span>
+                            {c.updatedAt && (
+                              <span className="text-[10px] text-emerald-700">
+                                {new Date(c.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            )}
+                          </div>
+                          <p className="whitespace-pre-wrap leading-relaxed font-medium">
+                            {c.adminReply}
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="text-[11px] text-gray-400 italic flex items-center gap-1.5 pt-1">
+                          <Clock className="w-3.5 h-3.5 text-amber-500" />
+                          <span>
+                            {lang === 'bn'
+                              ? 'অ্যাডমিন রিভিউ করছে। খুব শীঘ্রই উত্তর দেওয়া হবে।'
+                              : 'Awaiting admin response (usually 5-15 mins).'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
           )}
 
           {/* TAB 4: PROFILE */}
           {activeTab === 'profile' && (
-            <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200 space-y-3 text-xs">
-              <div className="flex justify-between py-2 border-b border-gray-200">
-                <span className="text-gray-500">{t.fullName}</span>
-                <span className="font-bold text-gray-900">{currentUser.name}</span>
+            <div className="bg-gray-50 p-5 rounded-2xl border border-gray-200 space-y-4 text-xs">
+              <div className="flex items-center justify-between border-b border-gray-200 pb-3">
+                <h3 className="font-bold text-gray-900 text-sm">
+                  {lang === 'bn' ? 'প্রোফাইল তথ্য' : 'Profile Information'}
+                </h3>
+                {!isEditingProfile ? (
+                  <button
+                    onClick={() => setIsEditingProfile(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-gray-200 text-gray-700 hover:text-emerald-700 hover:border-emerald-300 font-bold text-xs cursor-pointer shadow-2xs"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" />
+                    <span>{lang === 'bn' ? 'এডিট করুন' : 'Edit Profile'}</span>
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setIsEditingProfile(false)}
+                    className="text-gray-500 hover:text-gray-800 text-xs font-bold cursor-pointer"
+                  >
+                    {lang === 'bn' ? 'বাতিল' : 'Cancel'}
+                  </button>
+                )}
               </div>
-              <div className="flex justify-between py-2 border-b border-gray-200">
-                <span className="text-gray-500">{t.email}</span>
-                <span className="font-bold text-gray-900">{currentUser.email}</span>
-              </div>
-              <div className="flex justify-between py-2 border-b border-gray-200">
-                <span className="text-gray-500">{t.phoneWhatsApp}</span>
-                <span className="font-bold text-gray-900">{currentUser.phone}</span>
-              </div>
-              <div className="flex justify-between py-2">
-                <span className="text-gray-500">Account Role</span>
-                <span className="font-bold uppercase text-emerald-700">{currentUser.role}</span>
-              </div>
+
+              {isEditingProfile ? (
+                <form onSubmit={handleSaveProfile} className="space-y-3">
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-600 block mb-1">
+                      {t.fullName} *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                      className="w-full px-3 py-2 text-xs bg-white border border-gray-300 rounded-xl outline-hidden focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-600 block mb-1">
+                      {t.phoneWhatsApp}
+                    </label>
+                    <input
+                      type="text"
+                      value={editPhone}
+                      onChange={(e) => setEditPhone(e.target.value)}
+                      placeholder="e.g. 01712345678"
+                      className="w-full px-3 py-2 text-xs bg-white border border-gray-300 rounded-xl outline-hidden focus:border-emerald-600"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-600 block mb-1">
+                      {t.email} ({lang === 'bn' ? 'পরিবর্তন অযোগ্য' : 'Read-only'})
+                    </label>
+                    <input
+                      type="email"
+                      disabled
+                      value={currentUser.email}
+                      className="w-full px-3 py-2 text-xs bg-gray-100 border border-gray-200 rounded-xl text-gray-500 cursor-not-allowed"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] font-bold text-gray-600 block mb-1">
+                      Role ({lang === 'bn' ? 'সিস্টেম নির্ধারিত' : 'System Assigned'})
+                    </label>
+                    <input
+                      type="text"
+                      disabled
+                      value={currentUser.role}
+                      className="w-full px-3 py-2 text-xs bg-gray-100 border border-gray-200 rounded-xl font-bold uppercase text-emerald-800 cursor-not-allowed"
+                    />
+                    <p className="text-[10px] text-gray-400 mt-1">
+                      {lang === 'bn'
+                        ? 'গ্রাহক হিসেবে আপনি নিজের রোল পরিবর্তন করতে পারবেন না।'
+                        : 'Customers cannot modify their account role.'}
+                    </p>
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={isSavingProfile}
+                    className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-colors"
+                  >
+                    <Check className="w-4 h-4" />
+                    <span>{isSavingProfile ? 'Saving...' : 'Save Profile Changes'}</span>
+                  </button>
+                </form>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex justify-between py-2 border-b border-gray-200">
+                    <span className="text-gray-500">{t.fullName}</span>
+                    <span className="font-bold text-gray-900">{currentUser.name}</span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-gray-200">
+                    <span className="text-gray-500">{t.email}</span>
+                    <span className="font-bold text-gray-900">{currentUser.email}</span>
+                  </div>
+                  <div className="flex justify-between py-2 border-b border-gray-200">
+                    <span className="text-gray-500">{t.phoneWhatsApp}</span>
+                    <span className="font-bold text-gray-900">
+                      {currentUser.phone || (lang === 'bn' ? 'যুক্ত করা হয়নি' : 'Not set')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between py-2">
+                    <span className="text-gray-500">Account Role</span>
+                    <span className="font-black uppercase tracking-wider text-emerald-700 px-2 py-0.5 rounded-md bg-emerald-100 border border-emerald-200">
+                      {currentUser.role}
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

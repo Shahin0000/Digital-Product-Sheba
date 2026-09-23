@@ -17,13 +17,11 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-        request.auth.token.email == 'shahinpc2018@gmail.com' ||
-        request.auth.token.email == 'bajajmotors.chu@gmail.com' ||
-        request.auth.token.email == 'admin@digitalproducts.com' ||
-        (request.auth.token.email != null && request.auth.token.email.matches('.*admin.*'))
+        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
+          (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'))
       );
     }
 
@@ -43,7 +41,7 @@ service cloud.firestore {
       allow update: if isValidId(userId) && (
         isAdmin() ||
         (isOwner(userId) && 
-          (!('role' in request.resource.data) || request.resource.data.role == resource.data.role || request.resource.data.role == 'customer')
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
         )
       );
       allow delete: if isValidId(userId) && isAdmin();
@@ -84,7 +82,25 @@ service cloud.firestore {
       allow write: if isValidId(settingId) && isAdmin();
     }
 
-    // 7. Connection test document
+    // 7. Complaints collection
+    match /complaints/{complaintId} {
+      allow get: if isValidId(complaintId) && (isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(complaintId) && isSignedIn() && (
+        isAdmin() ||
+        (request.resource.data.userId == request.auth.uid &&
+         (!('status' in request.resource.data) || request.resource.data.status == 'pending') &&
+         (!('adminReply' in request.resource.data) || request.resource.data.adminReply == '' || request.resource.data.adminReply == null))
+      );
+      allow update: if isValidId(complaintId) && (
+        isAdmin() ||
+        (isSignedIn() && resource.data.userId == request.auth.uid &&
+         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'adminReply', 'userId']))
+      );
+      allow delete: if isValidId(complaintId) && isAdmin();
+    }
+
+    // 8. Connection test document
     match /test/{testId} {
       allow read: if true;
       allow write: if isAdmin();

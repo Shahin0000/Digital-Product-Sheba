@@ -33,12 +33,13 @@ import {
   CheckCheck,
   MessageSquare,
   Sparkles,
+  LifeBuoy,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
-import { Order, OrderStatus, Product, User, AdminUser, DeliveryRecord } from '../types';
+import { Order, OrderStatus, Product, User, AdminUser, DeliveryRecord, Complaint, ComplaintStatus } from '../types';
 import { AdminProductFormModal } from './AdminProductFormModal';
 
-type AdminTab = 'dashboard' | 'users' | 'products' | 'orders' | 'deliveries' | 'settings' | 'admins';
+type AdminTab = 'dashboard' | 'users' | 'products' | 'orders' | 'deliveries' | 'complaints' | 'settings' | 'admins';
 
 export const AdminDashboardModal: React.FC = () => {
   const {
@@ -70,12 +71,21 @@ export const AdminDashboardModal: React.FC = () => {
     saveDeliveryRecord,
     updateOrderAdminNotes,
     deleteOrder,
+    complaints,
+    updateComplaintByAdmin,
+    deleteComplaintByAdmin,
     showToast,
     lang,
     t,
   } = useStore();
 
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
+
+  // Complaints State
+  const [complaintSearch, setComplaintSearch] = useState('');
+  const [complaintStatusFilter, setComplaintStatusFilter] = useState<'all' | ComplaintStatus>('all');
+  const [replyInputMap, setReplyInputMap] = useState<Record<string, string>>({});
+  const [updatingComplaintId, setUpdatingComplaintId] = useState<string | null>(null);
 
   // Products Modal & Quick Edit
   const [isProductFormOpen, setIsProductFormOpen] = useState(false);
@@ -138,6 +148,8 @@ export const AdminDashboardModal: React.FC = () => {
   const processingOrders = orders.filter((o) => o.status === 'processing').length;
   const completedOrders = orders.filter((o) => o.status === 'completed').length;
   const totalDeliveries = allDeliveries.length;
+  const totalComplaints = complaints.length;
+  const pendingComplaintsCount = complaints.filter((c) => c.status === 'pending').length;
   const totalSales = orders
     .filter((o) => o.status === 'completed')
     .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
@@ -411,6 +423,27 @@ export const AdminDashboardModal: React.FC = () => {
               <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
                 {allDeliveries.length}
               </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('complaints')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap cursor-pointer ${
+                activeTab === 'complaints'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <LifeBuoy className="w-4 h-4 shrink-0" />
+              <span>💬 Complaints</span>
+              {pendingComplaintsCount > 0 ? (
+                <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold border border-amber-500/30">
+                  {pendingComplaintsCount}
+                </span>
+              ) : (
+                <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                  {totalComplaints}
+                </span>
+              )}
             </button>
 
             <button
@@ -1561,6 +1594,330 @@ export const AdminDashboardModal: React.FC = () => {
                       </tbody>
                     </table>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------- */}
+            {/* TAB: COMPLAINTS & WARRANTY TICKETS */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'complaints' && (
+              <div className="space-y-6">
+                <div>
+                  <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                    <LifeBuoy className="w-5 h-5 text-emerald-400" />
+                    <span>{lang === 'bn' ? 'গ্রাহক অভিযোগ ও ওয়ারেন্টি টিকেট' : 'Customer Complaints & Support Tickets'}</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {lang === 'bn'
+                      ? 'গ্রাহকদের সমস্যা পর্যালোচনা করুন, স্ট্যাটাস পরিবর্তন করুন এবং সরাসরি সমাধান পাঠান।'
+                      : 'Review customer complaints, manage statuses, and provide official resolution messages.'}
+                  </p>
+                </div>
+
+                {/* Metrics Grid */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-slate-800/60 border border-slate-700/60 rounded-xl p-4">
+                    <span className="text-xs text-slate-400 font-medium">Total Tickets</span>
+                    <div className="text-2xl font-black text-white mt-1 font-mono">{complaints.length}</div>
+                    <span className="text-[11px] text-slate-400 mt-1 block">All time complaints</span>
+                  </div>
+
+                  <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+                    <span className="text-xs text-amber-300 font-medium">Pending Review</span>
+                    <div className="text-2xl font-black text-amber-400 mt-1 font-mono">
+                      {complaints.filter((c) => c.status === 'pending').length}
+                    </div>
+                    <span className="text-[11px] text-amber-300/80 mt-1 block">Needs immediate action</span>
+                  </div>
+
+                  <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
+                    <span className="text-xs text-blue-300 font-medium">In Progress</span>
+                    <div className="text-2xl font-black text-blue-400 mt-1 font-mono">
+                      {complaints.filter((c) => c.status === 'in_progress').length}
+                    </div>
+                    <span className="text-[11px] text-blue-300/80 mt-1 block">Under investigation</span>
+                  </div>
+
+                  <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4">
+                    <span className="text-xs text-emerald-300 font-medium">Resolved / Closed</span>
+                    <div className="text-2xl font-black text-emerald-400 mt-1 font-mono">
+                      {complaints.filter((c) => c.status === 'resolved' || c.status === 'closed').length}
+                    </div>
+                    <span className="text-[11px] text-emerald-300/80 mt-1 block">Successfully resolved</span>
+                  </div>
+                </div>
+
+                {/* Filters & Search */}
+                <div className="bg-slate-800/40 border border-slate-700/60 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 w-full sm:w-80">
+                    <div className="relative w-full">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        placeholder="Search by ticket ID, customer, order ID, or issue..."
+                        value={complaintSearch}
+                        onChange={(e) => setComplaintSearch(e.target.value)}
+                        className="w-full pl-9 pr-3 py-1.5 bg-slate-900 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Status Pills */}
+                  <div className="flex items-center gap-1.5 overflow-x-auto">
+                    {(['all', 'pending', 'in_progress', 'resolved', 'closed'] as const).map((st) => {
+                      const count =
+                        st === 'all'
+                          ? complaints.length
+                          : complaints.filter((c) => c.status === st).length;
+                      const isActive = complaintStatusFilter === st;
+
+                      return (
+                        <button
+                          key={st}
+                          onClick={() => setComplaintStatusFilter(st)}
+                          className={`px-3 py-1 rounded-lg text-xs font-semibold capitalize whitespace-nowrap cursor-pointer transition-colors ${
+                            isActive
+                              ? 'bg-emerald-600 text-white shadow-xs'
+                              : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
+                          }`}
+                        >
+                          {st.replace('_', ' ')} ({count})
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Complaint Cards List */}
+                <div className="space-y-4">
+                  {complaints
+                    .filter((c) => {
+                      if (complaintStatusFilter !== 'all' && c.status !== complaintStatusFilter) {
+                        return false;
+                      }
+                      if (!complaintSearch.trim()) return true;
+                      const q = complaintSearch.toLowerCase();
+                      return (
+                        c.id.toLowerCase().includes(q) ||
+                        c.customerName.toLowerCase().includes(q) ||
+                        c.customerEmail.toLowerCase().includes(q) ||
+                        c.customerPhone.toLowerCase().includes(q) ||
+                        c.orderId?.toLowerCase().includes(q) ||
+                        c.subject.toLowerCase().includes(q) ||
+                        c.message.toLowerCase().includes(q)
+                      );
+                    })
+                    .map((c) => {
+                      const currentReplyInput =
+                        replyInputMap[c.id] !== undefined ? replyInputMap[c.id] : c.adminReply || '';
+
+                      return (
+                        <div
+                          key={c.id}
+                          className="bg-slate-800/60 border border-slate-700/80 rounded-2xl p-4 sm:p-5 space-y-4 shadow-sm"
+                        >
+                          {/* Card Header */}
+                          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-700/60 pb-3">
+                            <div className="flex items-center gap-3">
+                              <span className="font-mono text-sm font-bold text-emerald-400 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-700">
+                                #{c.id}
+                              </span>
+                              {c.orderId && (
+                                <span className="font-mono text-xs text-amber-300 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30">
+                                  Order: #{c.orderId}
+                                </span>
+                              )}
+                              <span className="text-xs text-slate-400">
+                                {new Date(c.createdAt).toLocaleString()}
+                              </span>
+                            </div>
+
+                            {/* Status Change Dropdown & Delete Button */}
+                            <div className="flex items-center gap-2">
+                              <select
+                                value={c.status}
+                                onChange={async (e) => {
+                                  const newStatus = e.target.value as ComplaintStatus;
+                                  await updateComplaintByAdmin(c.id, { status: newStatus });
+                                }}
+                                className={`text-xs font-bold px-3 py-1.5 rounded-xl border outline-none cursor-pointer ${
+                                  c.status === 'pending'
+                                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                    : c.status === 'in_progress'
+                                    ? 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+                                    : c.status === 'resolved'
+                                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                    : 'bg-slate-700 text-slate-300 border-slate-600'
+                                }`}
+                              >
+                                <option value="pending" className="bg-slate-900 text-white">
+                                  ⏳ Pending
+                                </option>
+                                <option value="in_progress" className="bg-slate-900 text-white">
+                                  ⚙️ In Progress
+                                </option>
+                                <option value="resolved" className="bg-slate-900 text-white">
+                                  ✅ Resolved
+                                </option>
+                                <option value="closed" className="bg-slate-900 text-white">
+                                  🔒 Closed
+                                </option>
+                              </select>
+
+                              <button
+                                onClick={async () => {
+                                  if (window.confirm(`Delete complaint #${c.id}?`)) {
+                                    await deleteComplaintByAdmin(c.id);
+                                  }
+                                }}
+                                className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                                title="Delete Complaint"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Customer info row */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-slate-300 bg-slate-900/60 p-2.5 rounded-xl border border-slate-800">
+                            <div>
+                              <span className="text-slate-500 block">Customer:</span>
+                              <span className="font-semibold text-white">{c.customerName}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block">Email:</span>
+                              <span className="font-mono text-slate-200">{c.customerEmail || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500 block">Phone / WhatsApp:</span>
+                              <span className="font-mono text-emerald-400">{c.customerPhone || 'N/A'}</span>
+                            </div>
+                          </div>
+
+                          {/* Customer's Complaint Description */}
+                          <div className="space-y-1.5">
+                            <h4 className="text-xs font-bold text-white flex items-center gap-1.5">
+                              <span className="text-slate-400">Issue:</span>
+                              <span>{c.subject}</span>
+                            </h4>
+                            <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-xs text-slate-300 whitespace-pre-wrap leading-relaxed select-text font-normal">
+                              {c.message}
+                            </div>
+                          </div>
+
+                          {/* Official Admin Reply & Resolution Section */}
+                          <div className="bg-slate-900/90 p-4 rounded-xl border border-slate-800 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
+                                <ShieldCheck className="w-4 h-4" />
+                                <span>Official Admin Response (Visible to Customer)</span>
+                              </span>
+                              {c.updatedAt && (
+                                <span className="text-[11px] text-slate-400">
+                                  Last updated: {new Date(c.updatedAt).toLocaleTimeString()}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Quick template buttons */}
+                            <div className="flex flex-wrap gap-1.5 text-[11px]">
+                              <span className="text-slate-400 self-center mr-1">Quick templates:</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setReplyInputMap((prev) => ({
+                                    ...prev,
+                                    [c.id]:
+                                      'আপনার অ্যাকাউন্টের সমস্যাটি সমাধান করা হয়েছে। দয়া করে আপনার ড্যাশবোর্ডে নতুন ক্রেডেনশিয়াল চেক করুন। ধন্যবাদ!',
+                                  }))
+                                }
+                                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                              >
+                                {lang === 'bn' ? '✅ অ্যাকাউন্ট সমাধান হয়েছে' : '✅ Issue Resolved'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setReplyInputMap((prev) => ({
+                                    ...prev,
+                                    [c.id]:
+                                      'We have sent fresh replacement credentials. Please log out and back in to verify.',
+                                  }))
+                                }
+                                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                              >
+                                🔑 Replacement Sent
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setReplyInputMap((prev) => ({
+                                    ...prev,
+                                    [c.id]:
+                                      'আপনার অভিযোগটি পেয়েছি। প্রোভাইডারের সার্ভার থেকে আপডেট আসার পর ১০-১৫ মিনিটের মধ্যে সমাধান দেওয়া হবে।',
+                                  }))
+                                }
+                                className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 cursor-pointer"
+                              >
+                                ⏳ Investigation in progress
+                              </button>
+                            </div>
+
+                            <textarea
+                              rows={2}
+                              value={currentReplyInput}
+                              onChange={(e) =>
+                                setReplyInputMap((prev) => ({
+                                  ...prev,
+                                  [c.id]: e.target.value,
+                                }))
+                              }
+                              placeholder="Write official resolution or response to this customer..."
+                              className="w-full px-3 py-2 bg-slate-950 border border-slate-700 rounded-lg text-xs text-emerald-200 placeholder-slate-600 focus:outline-none focus:border-emerald-500 font-medium"
+                            />
+
+                            <div className="flex items-center justify-end gap-2">
+                              <button
+                                type="button"
+                                disabled={updatingComplaintId === c.id}
+                                onClick={async () => {
+                                  setUpdatingComplaintId(c.id);
+                                  try {
+                                    await updateComplaintByAdmin(c.id, {
+                                      adminReply: currentReplyInput,
+                                      status: c.status === 'pending' ? 'in_progress' : c.status,
+                                    });
+                                  } finally {
+                                    setUpdatingComplaintId(null);
+                                  }
+                                }}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-emerald-600/20 cursor-pointer transition-colors"
+                              >
+                                <Save className="w-3.5 h-3.5" />
+                                <span>
+                                  {updatingComplaintId === c.id
+                                    ? 'Saving...'
+                                    : c.adminReply
+                                    ? 'Update Reply'
+                                    : 'Send Reply'}
+                                </span>
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                  {complaints.length === 0 && (
+                    <div className="text-center py-16 bg-slate-800/20 rounded-2xl border border-slate-800 text-slate-500">
+                      <CheckCircle2 className="w-12 h-12 mx-auto mb-2 opacity-30 text-emerald-400" />
+                      <p className="text-sm font-semibold">No complaints found</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        All customer tickets have been resolved or none submitted yet.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

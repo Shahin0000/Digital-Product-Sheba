@@ -224,3 +224,20 @@ export interface ToastMessage {
   type: 'success' | 'error' | 'info';
   message: string;
 }
+
+export type ComplaintStatus = 'pending' | 'in_progress' | 'resolved' | 'closed';
+
+export interface Complaint {
+  id: string;
+  userId: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone?: string;
+  subject: string;
+  message: string;
+  orderId?: string;
+  status: ComplaintStatus;
+  adminReply?: string;
+  createdAt: string;
+  updatedAt?: string;
+}

@@ -13,6 +13,8 @@ import {
   ToastMessage,
   ProductVariant,
   DeliveryRecord,
+  Complaint,
+  ComplaintStatus,
 } from '../types';
 import {
   initialCategories,
@@ -139,6 +141,16 @@ interface StoreContextType {
   updateOrderAdminNotes: (orderId: string, notes: string) => Promise<void>;
   deleteOrder: (orderId: string) => Promise<void>;
 
+  // Complaints
+  complaints: Complaint[];
+  complaintsLoading: boolean;
+  submitComplaint: (data: { subject: string; message: string; orderId?: string }) => Promise<Complaint>;
+  updateComplaintByAdmin: (complaintId: string, data: { status?: ComplaintStatus; adminReply?: string }) => Promise<void>;
+  deleteComplaintByAdmin: (complaintId: string) => Promise<void>;
+
+  // Profile
+  updateCustomerProfile: (data: { name?: string; phone?: string }) => Promise<void>;
+
   // Modals & Navigation
   isCartOpen: boolean;
   setIsCartOpen: (open: boolean) => void;
@@ -202,6 +214,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState<boolean>(true);
+
+  // Complaints State synced with Cloud Firestore
+  const [complaints, setComplaints] = useState<Complaint[]>([]);
+  const [complaintsLoading, setComplaintsLoading] = useState<boolean>(true);
 
   // Global Site Settings from Firestore
   const [siteSettings, setSiteSettings] = useState<SiteSettings>(initialSiteSettings);
@@ -371,19 +387,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // ----------------------------------------------------
-  // 3. AUTHENTICATION & USER PROFILE SYNC
+  // 3. AUTHENTICATION & USER PROFILE SYNC (ROLE SOURCE OF TRUTH: users/{uid}.role)
   // ----------------------------------------------------
-  const isSuperAdminEmail = (emailStr?: string | null) => {
-    if (!emailStr) return false;
-    const clean = emailStr.trim().toLowerCase();
-    return (
-      clean === 'shahinpc2018@gmail.com' ||
-      clean === 'bajajmotors.chu@gmail.com' ||
-      clean === 'admin@digitalproducts.com' ||
-      clean.includes('admin')
-    );
-  };
-
   useEffect(() => {
     let unsubscribeUserDoc: (() => void) | null = null;
 
@@ -411,56 +416,37 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           getDoc(adminDocRef).catch(() => null),
         ]);
 
-        const isAdmin =
-          isSuperAdminEmail(firebaseUser.email) ||
-          (adminSnap && adminSnap.exists()) ||
-          (userSnap && userSnap.exists() && userSnap.data()?.role === 'admin');
-
         if (!userSnap || !userSnap.exists()) {
-          // Automatic profile provision on first login
+          // Check if this UID is an existing legitimate admin in admins/{uid}
+          const isExistingLegitimateAdmin = Boolean(adminSnap && adminSnap.exists());
+          const role: User['role'] = isExistingLegitimateAdmin ? 'admin' : 'customer';
+
+          // Every NEW registration receives role: "customer"
           const newUser: User = {
             id: firebaseUser.uid,
             name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Customer',
             email: firebaseUser.email || '',
             phone: '',
-            role: isAdmin ? 'admin' : 'customer',
+            role,
             joinedDate: new Date().toISOString().split('T')[0],
           };
 
           await setDoc(userDocRef, newUser, { merge: true });
-          console.info('[Firestore] User profile initialized:', `users/${firebaseUser.uid}`);
-        } else if (isAdmin && userSnap.data()?.role !== 'admin') {
-          await setDoc(userDocRef, { role: 'admin' }, { merge: true });
+          console.info('[Firestore] User profile initialized:', `users/${firebaseUser.uid}`, 'role:', role);
         }
 
-        if (isAdmin && (!adminSnap || !adminSnap.exists())) {
-          await setDoc(
-            adminDocRef,
-            {
-              id: firebaseUser.uid,
-              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Admin',
-              email: firebaseUser.email || '',
-              role: 'admin',
-              createdAt: new Date().toISOString().split('T')[0],
-            },
-            { merge: true }
-          );
-        }
-
-        // Real-time synchronization of current user profile
+        // Real-time synchronization of current user profile from users/{uid}
         unsubscribeUserDoc = onSnapshot(
           userDocRef,
-          async (snapshot) => {
-            const userData = snapshot.exists() ? snapshot.data() : {};
-            let isUserAdmin = userData.role === 'admin' || isSuperAdminEmail(firebaseUser.email);
-            if (!isUserAdmin) {
-              try {
-                const aSnap = await getDoc(adminDocRef);
-                if (aSnap.exists()) isUserAdmin = true;
-              } catch {}
+          (snapshot) => {
+            if (!snapshot.exists()) {
+              setAuthLoading(false);
+              return;
             }
 
-            const role: User['role'] = isUserAdmin ? 'admin' : 'customer';
+            const userData = snapshot.data();
+            // Single Source of Truth: users/{currentUser.uid}.role
+            const role: User['role'] = userData.role === 'admin' ? 'admin' : 'customer';
 
             const profile: User = {
               id: firebaseUser.uid,
@@ -473,17 +459,33 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
             setCurrentUser(profile);
             setAuthLoading(false);
+
+            // REAL-TIME ROLE CHANGE REACTION:
+            // If the user's role has become 'customer', immediately revoke admin access & navigation
+            if (role === 'customer') {
+              setIsAdminDashboardOpen((wasOpen) => {
+                if (wasOpen) {
+                  setIsUserDashboardOpen(true);
+                  showToast(
+                    lang === 'bn'
+                      ? 'আপনার ভূমিকা কাস্টমার (Customer) এ পরিবর্তিত হয়েছে।'
+                      : 'Your role has been set to Customer. Redirecting to Customer Dashboard.',
+                    'info'
+                  );
+                }
+                return false;
+              });
+
+              // Clean up direct admin URL
+              if (window.location.pathname.startsWith('/admin')) {
+                window.history.replaceState(null, '', '/');
+              } else if (window.location.hash.toLowerCase().includes('admin')) {
+                window.location.hash = '';
+              }
+            }
           },
           (error) => {
             console.error('[Firestore] User profile listener error:', error);
-            setCurrentUser({
-              id: firebaseUser.uid,
-              name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
-              email: firebaseUser.email || '',
-              phone: '',
-              role: isSuperAdminEmail(firebaseUser.email) ? 'admin' : 'customer',
-              joinedDate: new Date().toISOString().split('T')[0],
-            });
             setAuthLoading(false);
           }
         );
@@ -491,10 +493,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         console.error('Error fetching/creating user doc:', authDocErr);
         setCurrentUser({
           id: firebaseUser.uid,
-          name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'User',
+          name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Customer',
           email: firebaseUser.email || '',
           phone: '',
-          role: isSuperAdminEmail(firebaseUser.email) ? 'admin' : 'customer',
+          role: 'customer',
           joinedDate: new Date().toISOString().split('T')[0],
         });
         setAuthLoading(false);
@@ -505,7 +507,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (unsubscribeUserDoc) unsubscribeUserDoc();
       unsubscribeAuth();
     };
-  }, []);
+  }, [lang]);
 
   // Handle pending checkout redirection after login
   useEffect(() => {
@@ -536,8 +538,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const loginWithEmail = async (email: string, pass: string) => {
     try {
       const cred = await signInWithEmailAndPassword(auth, email.trim(), pass);
-      const isAdm = isSuperAdminEmail(email.trim());
-      navigatePostLogin(isAdm);
+      const uDoc = await getDoc(doc(db, 'users', cred.user.uid)).catch(() => null);
+      const isAdm = uDoc?.exists() && uDoc.data()?.role === 'admin';
+      navigatePostLogin(Boolean(isAdm));
       showToast(lang === 'bn' ? 'লগইন সফল হয়েছে!' : 'Logged in successfully!', 'success');
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -565,32 +568,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const userCred = await createUserWithEmailAndPassword(auth, email.trim(), pass);
       await updateProfile(userCred.user, { displayName: name });
 
-      const isAdmin = isSuperAdminEmail(email.trim());
+      // Every NEW user registering MUST automatically receive role: "customer"
       const newUser: User = {
         id: userCred.user.uid,
-        name,
+        name: name.trim() || email.split('@')[0],
         email: email.trim(),
-        phone,
-        role: isAdmin ? 'admin' : 'customer',
+        phone: phone.trim(),
+        role: 'customer',
         joinedDate: new Date().toISOString().split('T')[0],
       };
 
-      // Create/overwrite the customer's Firestore profile immediately after Auth signup.
-      // merge:true keeps any existing profile fields safe while guaranteeing users/{uid} exists.
       await setDoc(doc(db, 'users', userCred.user.uid), newUser, { merge: true });
-      console.info('[Firestore] User profile created:', `users/${userCred.user.uid}`);
-      if (isAdmin) {
-        await setDoc(doc(db, 'admins', userCred.user.uid), {
-          id: userCred.user.uid,
-          name,
-          email: email.trim(),
-          role: 'admin',
-          createdAt: new Date().toISOString().split('T')[0],
-        });
-      }
+      console.info('[Firestore] New user registered with customer role:', `users/${userCred.user.uid}`);
 
       setCurrentUser(newUser);
-      navigatePostLogin(isAdmin);
+      navigatePostLogin(false);
       showToast(
         lang === 'bn' ? `অ্যাকাউন্ট তৈরি সফল, স্বাগতম ${name}!` : `Account created! Welcome, ${name}!`,
         'success'
@@ -614,7 +606,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const loginWithGoogle = async () => {
     try {
       const cred = await signInWithPopup(auth, googleProvider);
-      const isAdm = isSuperAdminEmail(cred.user?.email);
+      const uDoc = await getDoc(doc(db, 'users', cred.user.uid)).catch(() => null);
+      let isAdm = false;
+      if (uDoc && uDoc.exists()) {
+        isAdm = uDoc.data()?.role === 'admin';
+      } else {
+        // New user through Google sign-in: ensure role: "customer"
+        const newUser: User = {
+          id: cred.user.uid,
+          name: cred.user.displayName || cred.user.email?.split('@')[0] || 'Customer',
+          email: cred.user.email || '',
+          phone: '',
+          role: 'customer',
+          joinedDate: new Date().toISOString().split('T')[0],
+        };
+        await setDoc(doc(db, 'users', cred.user.uid), newUser, { merge: true });
+      }
       navigatePostLogin(isAdm);
       showToast(lang === 'bn' ? 'গুগল দিয়ে লগইন সফল!' : 'Signed in with Google!', 'success');
     } catch (err: unknown) {
@@ -1053,6 +1060,225 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(lang === 'bn' ? 'অর্ডার মুছে ফেলা হয়েছে' : 'Order deleted', 'info');
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `orders/${orderId}`);
+    }
+  };
+
+  // ----------------------------------------------------
+  // COMPLAINT SYSTEM (REAL-TIME SYNC & ACCESS CONTROL)
+  // ----------------------------------------------------
+  useEffect(() => {
+    if (!currentUser) {
+      setComplaints([]);
+      setComplaintsLoading(false);
+      return;
+    }
+
+    setComplaintsLoading(true);
+
+    let q;
+    if (currentUser.role === 'admin') {
+      q = query(collection(db, 'complaints'), orderBy('createdAt', 'desc'));
+    } else {
+      q = query(collection(db, 'complaints'), where('userId', '==', currentUser.id));
+    }
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
+        const loaded: Complaint[] = [];
+        snapshot.forEach((docSnap) => {
+          const data = docSnap.data();
+          let createdAtStr = new Date().toISOString();
+          if (data.createdAtIso) {
+            createdAtStr = data.createdAtIso;
+          } else if (data.createdAt?.toDate) {
+            createdAtStr = data.createdAt.toDate().toISOString();
+          } else if (typeof data.createdAt === 'string') {
+            createdAtStr = data.createdAt;
+          }
+
+          let updatedAtStr: string | undefined = undefined;
+          if (data.updatedAtIso) {
+            updatedAtStr = data.updatedAtIso;
+          } else if (data.updatedAt?.toDate) {
+            updatedAtStr = data.updatedAt.toDate().toISOString();
+          } else if (typeof data.updatedAt === 'string') {
+            updatedAtStr = data.updatedAt;
+          }
+
+          loaded.push({
+            id: docSnap.id,
+            userId: data.userId || '',
+            customerName: data.customerName || 'Customer',
+            customerEmail: data.customerEmail || '',
+            customerPhone: data.customerPhone || '',
+            subject: data.subject || '',
+            message: data.message || '',
+            orderId: data.orderId || '',
+            status: (data.status as ComplaintStatus) || 'pending',
+            adminReply: data.adminReply || '',
+            createdAt: createdAtStr,
+            updatedAt: updatedAtStr,
+          });
+        });
+
+        // Always sort newest first
+        loaded.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setComplaints(loaded);
+        setComplaintsLoading(false);
+      },
+      (error) => {
+        console.error('Complaints listener error:', error);
+        setComplaintsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, [currentUser?.id, currentUser?.role]);
+
+  const submitComplaint = async (data: {
+    subject: string;
+    message: string;
+    orderId?: string;
+  }): Promise<Complaint> => {
+    if (!currentUser || !auth.currentUser) {
+      throw new Error(lang === 'bn' ? 'অনুগ্রহ করে প্রথমে লগইন করুন।' : 'Please sign in first.');
+    }
+    const cleanSubject = data.subject.trim();
+    const cleanMessage = data.message.trim();
+    if (!cleanSubject || !cleanMessage) {
+      throw new Error(lang === 'bn' ? 'বিষয় এবং বিস্তারিত মেসেজ আবশ্যক।' : 'Subject and detailed message are required.');
+    }
+
+    const randomNum = Math.floor(10000 + Math.random() * 90000);
+    const complaintId = `CMP-${randomNum}`;
+    const nowIso = new Date().toISOString();
+
+    const payload: Record<string, any> = {
+      id: complaintId,
+      userId: auth.currentUser.uid,
+      customerName: currentUser.name || auth.currentUser.displayName || 'Customer',
+      customerEmail: currentUser.email || auth.currentUser.email || '',
+      customerPhone: currentUser.phone || '',
+      subject: cleanSubject,
+      message: cleanMessage,
+      orderId: data.orderId ? data.orderId.trim() : '',
+      status: 'pending',
+      adminReply: '',
+      createdAt: serverTimestamp(),
+      createdAtIso: nowIso,
+      updatedAt: serverTimestamp(),
+      updatedAtIso: nowIso,
+    };
+
+    try {
+      await setDoc(doc(db, 'complaints', complaintId), sanitizeForFirestore(payload));
+      const newComplaint: Complaint = {
+        id: complaintId,
+        userId: auth.currentUser.uid,
+        customerName: payload.customerName,
+        customerEmail: payload.customerEmail,
+        customerPhone: payload.customerPhone,
+        subject: cleanSubject,
+        message: cleanMessage,
+        orderId: payload.orderId,
+        status: 'pending',
+        adminReply: '',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      setComplaints((prev) => [newComplaint, ...prev.filter((c) => c.id !== complaintId)]);
+      showToast(
+        lang === 'bn'
+          ? 'আপনার অভিযোগটি সফলভাবে জমা হয়েছে। আমাদের অ্যাডমিন দ্রুত পর্যবেক্ষণ করে উত্তর দেবে।'
+          : 'Complaint submitted successfully! Our team will review and respond soon.',
+        'success'
+      );
+      return newComplaint;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `complaints/${complaintId}`);
+      throw err;
+    }
+  };
+
+  const updateComplaintByAdmin = async (
+    complaintId: string,
+    data: { status?: ComplaintStatus; adminReply?: string }
+  ): Promise<void> => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      showToast('Unauthorized: Only administrators can update complaints.', 'error');
+      throw new Error('Unauthorized');
+    }
+
+    try {
+      const nowIso = new Date().toISOString();
+      const updateData: Record<string, any> = {
+        updatedAt: serverTimestamp(),
+        updatedAtIso: nowIso,
+      };
+      if (data.status) updateData.status = data.status;
+      if (data.adminReply !== undefined) updateData.adminReply = data.adminReply.trim();
+
+      await updateDoc(doc(db, 'complaints', complaintId), sanitizeForFirestore(updateData));
+
+      setComplaints((prev) =>
+        prev.map((c) =>
+          c.id === complaintId
+            ? {
+                ...c,
+                ...(data.status ? { status: data.status } : {}),
+                ...(data.adminReply !== undefined ? { adminReply: data.adminReply.trim() } : {}),
+                updatedAt: nowIso,
+              }
+            : c
+        )
+      );
+
+      showToast(
+        lang === 'bn' ? 'অভিযোগের স্ট্যাটাস ও উত্তর সংরক্ষিত হয়েছে' : 'Complaint updated successfully',
+        'success'
+      );
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `complaints/${complaintId}`);
+      throw err;
+    }
+  };
+
+  const deleteComplaintByAdmin = async (complaintId: string): Promise<void> => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      showToast('Unauthorized: Only administrators can delete complaints.', 'error');
+      throw new Error('Unauthorized');
+    }
+
+    try {
+      await deleteDoc(doc(db, 'complaints', complaintId));
+      setComplaints((prev) => prev.filter((c) => c.id !== complaintId));
+      showToast(lang === 'bn' ? 'অভিযোগ মুছে ফেলা হয়েছে' : 'Complaint deleted', 'info');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.DELETE, `complaints/${complaintId}`);
+      throw err;
+    }
+  };
+
+  const updateCustomerProfile = async (data: { name?: string; phone?: string }): Promise<void> => {
+    if (!currentUser || !auth.currentUser) {
+      throw new Error('Please sign in');
+    }
+    try {
+      const sanitized: Record<string, any> = {};
+      if (data.name !== undefined) sanitized.name = data.name.trim();
+      if (data.phone !== undefined) sanitized.phone = data.phone.trim();
+
+      // STRICT SECURITY: Customer CANNOT modify role!
+      delete sanitized.role;
+
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), sanitized);
+      setCurrentUser((prev) => (prev ? { ...prev, ...sanitized } : null));
+      showToast(lang === 'bn' ? 'প্রোফাইল আপডেট হয়েছে' : 'Profile updated successfully', 'success');
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `users/${auth.currentUser.uid}`);
+      throw err;
     }
   };
 
@@ -1928,6 +2154,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         saveDeliveryRecord,
         updateOrderAdminNotes,
         deleteOrder,
+        complaints,
+        complaintsLoading,
+        submitComplaint,
+        updateComplaintByAdmin,
+        deleteComplaintByAdmin,
+        updateCustomerProfile,
         isCartOpen,
         setIsCartOpen,
         activeProductModal,

@@ -93,7 +93,9 @@ interface StoreContextType {
     deliveryData?: {
       deliveryMethod?: string;
       externalAccessUrl?: string;
+      externalAccessLink?: string;
       credentialsOrKey?: string;
+      credentials?: string;
       notes?: string;
       fileName?: string;
       fileSize?: number;
@@ -1518,7 +1520,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     deliveryData?: {
       deliveryMethod?: string;
       externalAccessUrl?: string;
+      externalAccessLink?: string;
       credentialsOrKey?: string;
+      credentials?: string;
       notes?: string;
       fileName?: string;
       fileSize?: number;

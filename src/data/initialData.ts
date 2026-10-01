@@ -32,6 +32,10 @@ export const initialProducts: Product[] = [
     instructionsBn: '১. অর্ডার সম্পন্ন হলে আপনাকে ড্যাশবোর্ড ও হোয়াটসঅ্যাপে ইমেইল, পাসওয়ার্ড এবং আপনার নির্ধারিত প্রোফাইল পিন প্রদান করা হবে।\n২. নেটফ্লিক্সে লগইন করে আপনার নামের প্রোফাইলে প্রবেশ করুন।\n৩. মূল পাসওয়ার্ড পরিবর্তন করবেন না, এতে ওয়ারেন্টি বহাল থাকবে।',
     featured: true,
     trending: true,
+    isDigitalProduct: true,
+    downloadAccessType: 'external_link',
+    externalAccessUrl: 'https://drive.google.com/drive/folders/1DPS-Netflix-VIP-Access',
+    externalAccessLink: 'https://drive.google.com/drive/folders/1DPS-Netflix-VIP-Access',
     variants: [
       {
         id: 'net-1m-shared',
@@ -96,6 +100,10 @@ export const initialProducts: Product[] = [
     instructionsBn: 'আপনার জিমেইল প্রোভাইড করুন অথবা আমাদের দেওয়া প্রি-অ্যাক্টিভেটেড লগইন ব্যবহার করুন। জিপিটি-৪ও এবং ভয়েস মোড সাথে সাথে উপভোগ করতে পারবেন।',
     featured: true,
     trending: true,
+    isDigitalProduct: true,
+    downloadAccessType: 'external_link',
+    externalAccessUrl: 'https://drive.google.com/drive/folders/1DPS-ChatGPTPlus-VIP-Drive',
+    externalAccessLink: 'https://drive.google.com/drive/folders/1DPS-ChatGPTPlus-VIP-Drive',
     variants: [
       {
         id: 'gpt-1m-shared',
@@ -202,6 +210,10 @@ export const initialProducts: Product[] = [
     instructionsBn: 'সেটিংস > সিস্টেম > অ্যাক্টিভেশন এ গিয়ে চেঞ্জ প্রডাক্ট কি অপশনে অর্ডার রসিদে প্রাপ্ত ২৫ অক্ষরের কি পেস্ট করুন।',
     featured: true,
     trending: false,
+    isDigitalProduct: true,
+    downloadAccessType: 'external_link',
+    externalAccessUrl: 'https://drive.google.com/drive/folders/1DPS-Windows11Pro-Activation-Vault',
+    externalAccessLink: 'https://drive.google.com/drive/folders/1DPS-Windows11Pro-Activation-Vault',
     variants: [
       {
         id: 'win11-1pc',
@@ -253,6 +265,10 @@ export const initialProducts: Product[] = [
     instructionsBn: 'অফিসিয়াল নর্ডভিপিএন অ্যাপ ডাউনলোড করে অর্ডারে প্রাপ্ত ইমেইল ও পাসওয়ার্ড দিয়ে লগইন করে কানেক্ট করুন।',
     featured: false,
     trending: true,
+    isDigitalProduct: true,
+    downloadAccessType: 'external_link',
+    externalAccessUrl: 'https://drive.google.com/drive/folders/1DPS-NordVPN-Secure-Access',
+    externalAccessLink: 'https://drive.google.com/drive/folders/1DPS-NordVPN-Secure-Access',
     variants: [
       {
         id: 'nord-1y',
@@ -304,6 +320,10 @@ export const initialProducts: Product[] = [
     instructionsBn: 'portal.office.com এ গিয়ে অর্ডারে প্রাপ্ত ইউজারনেম ও ওয়ান-টাইম পাসওয়ার্ড দিয়ে লগইন করে নিজস্ব পাসওয়ার্ড সেট করুন।',
     featured: false,
     trending: false,
+    isDigitalProduct: true,
+    downloadAccessType: 'external_link',
+    externalAccessUrl: 'https://drive.google.com/drive/folders/1DPS-Office365-Cloud-Drive',
+    externalAccessLink: 'https://drive.google.com/drive/folders/1DPS-Office365-Cloud-Drive',
     variants: [
       {
         id: 'off365-1y',

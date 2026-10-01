@@ -233,7 +233,7 @@ export const UserDashboardModal: React.FC = () => {
             }`}
           >
             <DownloadCloud className="w-4 h-4" />
-            <span>{lang === 'bn' ? 'ডেলিভারি ও ফাইল' : 'Digital Access & Files'}</span>
+            <span>{lang === 'bn' ? 'ডেলিভারি ও ফাইল' : 'Delivery & Files'}</span>
           </button>
 
           <button
@@ -354,16 +354,16 @@ export const UserDashboardModal: React.FC = () => {
             </div>
           )}
 
-          {/* TAB 2: DIGITAL ACCESS & KEYS */}
+          {/* TAB 2: DELIVERY & FILES */}
           {activeTab === 'keys' && (
             <div className="space-y-4">
               {myOrders.filter((o) => o.status === 'delivered' || o.status === 'completed').length === 0 ? (
                 <div className="text-center py-12 text-gray-400">
-                  <Key className="w-12 h-12 mx-auto mb-2 opacity-40" />
+                  <ExternalLink className="w-12 h-12 mx-auto mb-2 opacity-40 text-emerald-500" />
                   <p className="text-xs font-bold">
                     {lang === 'bn'
                       ? 'এখনো কোনো ডিজিটাল ডেলিভারি সম্পন্ন হয়নি।'
-                      : 'No delivered keys or credentials found yet.'}
+                      : 'No deliveries available yet.'}
                   </p>
                 </div>
               ) : (
@@ -371,120 +371,111 @@ export const UserDashboardModal: React.FC = () => {
                   .filter((o) => o.status === 'delivered' || o.status === 'completed')
                   .map((order) => {
                     const delivery = deliveries[order.id];
-                    const keyText =
-                      delivery?.credentials ||
-                      delivery?.licenseKey ||
-                      delivery?.credentialsOrKey ||
-                      order.digitalDeliveries?.[0]?.credentialsOrKey ||
-                      order.deliveryNotes ||
-                      '';
+                    const primaryItem = order.items && order.items.length > 0 ? order.items[0] : null;
+                    const prodName = primaryItem?.productTitle || (primaryItem as any)?.productName || 'Digital Product';
+                    const variantName = primaryItem?.variantName || (primaryItem as any)?.variantTitle || '';
+
+                    // Resolve External Access Link (Google Drive URL)
+                    const extLink = (
+                      delivery?.externalAccessUrl ||
+                      (delivery as any)?.externalAccessLink ||
+                      delivery?.downloadLink ||
+                      delivery?.downloadUrl ||
+                      order.digitalDeliveries?.[0]?.externalAccessUrl ||
+                      (order.digitalDeliveries?.[0] as any)?.externalAccessLink ||
+                      order.digitalDeliveries?.[0]?.downloadLink ||
+                      order.digitalDeliveries?.[0]?.downloadUrl ||
+                      ''
+                    ).trim();
 
                     return (
                       <div
                         key={order.id}
-                        className="bg-slate-900 text-white p-4 sm:p-5 rounded-2xl space-y-3 border border-slate-800 shadow-md"
+                        className="bg-slate-900 text-white p-5 rounded-2xl space-y-4 border border-slate-800 shadow-md"
                       >
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3">
                           <div>
-                            <span className="text-[10px] text-emerald-400 font-mono font-bold block uppercase">
+                            <span className="text-[10px] text-emerald-400 font-mono font-bold block uppercase tracking-wider">
                               Order #{order.orderId || order.id}
                             </span>
-                            <h4 className="text-sm font-bold text-white">
-                              {order.items[0]?.productTitle || order.items[0]?.productName}
+                            <div className="text-xs text-slate-400 mt-1">Product Name:</div>
+                            <h4 className="text-base font-bold text-white flex items-center gap-2">
+                              <span>{prodName}</span>
+                              {variantName && (
+                                <span className="text-xs font-normal text-slate-300 bg-slate-800 px-2 py-0.5 rounded-md border border-slate-700">
+                                  {variantName}
+                                </span>
+                              )}
                             </h4>
                           </div>
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
-                            Delivered
-                          </span>
+                          <div>
+                            <div className="text-[10px] text-slate-400 text-right mb-0.5">Delivery Status:</div>
+                            <span className="px-3 py-1 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 inline-block">
+                              Delivered
+                            </span>
+                          </div>
                         </div>
 
-                        {/* License / Credentials Display */}
-                        {keyText && (
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-[10px] uppercase font-bold text-gray-400">
-                                License Key / Credentials
-                              </span>
+                        {/* Access Link: ONLY Google Drive / External Access Link */}
+                        <div className="bg-slate-950 p-4 rounded-xl border border-slate-800/80 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                              <ExternalLink className="w-4 h-4 text-emerald-400" />
+                              <span>Access Link:</span>
+                            </span>
+                            {extLink && (
                               <button
                                 type="button"
-                                onClick={() => handleCopy(keyText)}
-                                className="text-[11px] text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 cursor-pointer"
+                                onClick={() => handleCopy(extLink)}
+                                className="text-xs text-slate-400 hover:text-emerald-300 font-semibold flex items-center gap-1 cursor-pointer transition-colors"
                               >
-                                {copiedKey === keyText ? (
+                                {copiedKey === extLink ? (
                                   <>
-                                    <Check className="w-3 h-3" />
-                                    <span>{t.copied}</span>
+                                    <Check className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span className="text-emerald-400">{t.copied || 'Copied'}</span>
                                   </>
                                 ) : (
                                   <>
-                                    <Copy className="w-3 h-3" />
-                                    <span>{t.copyKey}</span>
+                                    <Copy className="w-3.5 h-3.5" />
+                                    <span>{t.copyKey || 'Copy Link'}</span>
                                   </>
                                 )}
                               </button>
-                            </div>
-                            <div className="bg-slate-950 p-3 rounded-xl font-mono text-amber-300 text-xs break-all select-all whitespace-pre-wrap border border-slate-800">
-                              {keyText}
-                            </div>
+                            )}
                           </div>
-                        )}
 
-                        {/* External link if present */}
-                        {(() => {
-                          const extLink =
-                            delivery?.externalAccessUrl ||
-                            (delivery as any)?.externalAccessLink ||
-                            delivery?.downloadLink ||
-                            delivery?.downloadUrl ||
-                            order.digitalDeliveries?.[0]?.externalAccessUrl ||
-                            (order.digitalDeliveries?.[0] as any)?.externalAccessLink ||
-                            order.digitalDeliveries?.[0]?.downloadLink ||
-                            order.digitalDeliveries?.[0]?.downloadUrl;
-
-                          if (extLink && extLink.startsWith('http') && !delivery?.fileName) {
-                            return (
-                              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
-                                <div className="text-[10px] uppercase font-bold text-emerald-400">
-                                  {lang === 'bn' ? 'ডিজিটাল অ্যাক্সেস / ড্রাইভ লিংক' : 'Digital Access / Drive Link'}
-                                </div>
-                                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
-                                  <span className="font-mono text-xs text-slate-200 truncate select-all">
-                                    {extLink}
-                                  </span>
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <button
-                                      type="button"
-                                      onClick={() => handleCopy(extLink)}
-                                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg font-bold flex items-center gap-1 cursor-pointer transition-colors"
-                                    >
-                                      {copiedKey === extLink ? (
-                                        <>
-                                          <Check className="w-3 h-3 text-emerald-400" />
-                                          <span>{t.copied}</span>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Copy className="w-3 h-3" />
-                                          <span>{t.copyKey || 'Copy'}</span>
-                                        </>
-                                      )}
-                                    </button>
-                                    <a
-                                      href={extLink}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg inline-flex items-center gap-1.5 transition-colors shadow-xs"
-                                    >
-                                      <ExternalLink className="w-3.5 h-3.5" />
-                                      <span>{lang === 'bn' ? 'লিংক ওপেন করুন' : 'Open Link'}</span>
-                                    </a>
-                                  </div>
-                                </div>
+                          {extLink ? (
+                            <div className="space-y-3">
+                              <div className="p-2.5 bg-slate-900/90 border border-slate-800 rounded-lg font-mono text-xs text-emerald-300 break-all select-all">
+                                {extLink}
                               </div>
-                            );
-                          }
-                          return null;
-                        })()}
+                              <div className="flex items-center gap-2">
+                                <a
+                                  href={extLink}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-black rounded-xl inline-flex items-center gap-2 transition-all shadow-md shadow-emerald-600/25 hover:scale-[1.02] cursor-pointer"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                  <span>Open / Download</span>
+                                </a>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="p-3 bg-slate-900/50 rounded-lg text-xs text-slate-400">
+                              {lang === 'bn'
+                                ? 'অ্যাক্সেস লিংক প্রক্রিয়াধীন রয়েছে।'
+                                : 'Access link is being prepared.'}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Instructions / Warranty Notes if provided */}
+                        {(delivery?.notes || order.deliveryNotes) && (
+                          <p className="text-[11px] text-slate-400 italic">
+                            Note: {delivery?.notes || order.deliveryNotes}
+                          </p>
+                        )}
                       </div>
                     );
                   })

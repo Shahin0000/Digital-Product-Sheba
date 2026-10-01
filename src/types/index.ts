@@ -50,6 +50,7 @@ export interface Product {
   digitalFileUrl?: string;
   downloadAccessType?: 'file_download' | 'credentials' | 'external_link';
   externalAccessUrl?: string;
+  externalAccessLink?: string;
 }
 
 export interface Category {

@@ -16,6 +16,7 @@ import {
   CheckCircle2,
   Clock,
   AlertTriangle,
+  AlertCircle,
   ExternalLink,
   Copy,
   Save,
@@ -224,7 +225,6 @@ export const AdminDashboardModal: React.FC = () => {
     const existing = deliveries[order.id];
     const primaryItem = order.items && order.items.length > 0 ? order.items[0] : null;
     const prod = products.find((p) => p.id === primaryItem?.productId);
-    const matchedVariant = prod?.variants?.find((v) => v.id === primaryItem?.variantId);
 
     // Retrieve the product's existing: External Access Link (e.g. Google Drive URL)
     const productExternalLink = (
@@ -234,56 +234,23 @@ export const AdminDashboardModal: React.FC = () => {
       ''
     ).trim();
 
+    setDeliveryMode('link');
+
     if (existing) {
-      const existingLink =
+      const existingLink = (
         existing.externalAccessUrl ||
         (existing as any)?.externalAccessLink ||
         existing.downloadLink ||
         existing.downloadUrl ||
-        '';
+        productExternalLink ||
+        ''
+      ).trim();
 
-      if (existingLink) {
-        setDeliveryMode('link');
-        setDeliveryContentInput(existingLink);
-      } else {
-        setDeliveryMode(
-          (existing.deliveryType as 'credentials' | 'file' | 'license_key' | 'link') || 'credentials'
-        );
-        setDeliveryContentInput(
-          existing.credentialsOrKey || existing.credentials || existing.licenseKey || ''
-        );
-      }
+      setDeliveryContentInput(existingLink);
       setDeliveryNotesInput(existing.notes || existing.adminNotes || '');
     } else {
-      // 1. If product has an External Access Link, automatically populate it
-      if (productExternalLink) {
-        setDeliveryMode('link');
-        setDeliveryContentInput(productExternalLink);
-      } else if (prod?.downloadAccessType === 'external_link') {
-        setDeliveryMode('link');
-        setDeliveryContentInput('');
-        showToast(
-          lang === 'bn'
-            ? 'এই প্রোডাক্টের External Access Link দেওয়া হয়নি।'
-            : 'No External Access Link configured for this product.',
-          'info'
-        );
-      } else if (matchedVariant?.sampleKey) {
-        setDeliveryMode('credentials');
-        setDeliveryContentInput(matchedVariant.sampleKey);
-      } else if (prod?.digitalFileUrl) {
-        setDeliveryMode('file');
-        setDeliveryContentInput(prod.digitalFileUrl);
-      } else {
-        setDeliveryMode('link');
-        setDeliveryContentInput('');
-        showToast(
-          lang === 'bn'
-            ? 'এই প্রোডাক্টের External Access Link দেওয়া হয়নি।'
-            : 'No External Access Link configured for this product.',
-          'info'
-        );
-      }
+      // Automatically load External Access Link from the ordered product
+      setDeliveryContentInput(productExternalLink);
       setDeliveryNotesInput(
         lang === 'bn'
           ? 'Digital Product Sheba থেকে সফলভাবে ডেলিভারি করা হয়েছে।'
@@ -301,57 +268,30 @@ export const AdminDashboardModal: React.FC = () => {
       return;
     }
 
-    const primaryItem = selectedOrderForDelivery.items && selectedOrderForDelivery.items.length > 0
-      ? selectedOrderForDelivery.items[0]
-      : null;
-
-    // 2. Validate that an External Access Link / delivery content exists
+    // 2. Validate that an External Access Link exists
     const cleanContent = deliveryContentInput.trim();
     if (!cleanContent) {
       showToast(
         lang === 'bn'
-          ? 'এই প্রোডাক্টের External Access Link দেওয়া হয়নি।'
-          : 'No External Access Link provided for this product.',
+          ? 'দয়া করে External Access Link (যেমন Google Drive URL) প্রদান করুন।'
+          : 'Please provide the External Access Link (e.g. Google Drive URL).',
         'error'
       );
       return;
     }
 
     try {
-      // 3. deliverOrder handles:
-      // - Updating orders/{orderId} status to 'delivered' and digitalDeliveries
-      // - Creating/updating deliveries/{deliveryId} with correct fields
-      // - Dispatching notifications
-      // - Refreshing order list and delivery list
-      // - Showing 'Delivery successful'
-      await deliverOrder(
-        selectedOrderForDelivery.id,
-        deliveryMode === 'link'
-          ? {
-              deliveryMethod: 'external_link',
-              externalAccessUrl: cleanContent,
-              notes: deliveryNotesInput.trim(),
-            }
-          : deliveryMode === 'file'
-          ? {
-              deliveryMethod: 'file',
-              fileName: `${primaryItem?.productTitle || 'Digital-Item'}.zip`,
-              fileUrl: cleanContent,
-              notes: deliveryNotesInput.trim(),
-            }
-          : {
-              deliveryMethod: 'credentials',
-              credentials: cleanContent,
-              credentialsOrKey: cleanContent,
-              notes: deliveryNotesInput.trim(),
-            }
-      );
+      await deliverOrder(selectedOrderForDelivery.id, {
+        deliveryMethod: 'external_link',
+        externalAccessUrl: cleanContent,
+        notes: deliveryNotesInput.trim(),
+      });
 
       setSelectedOrderForDelivery(null);
     } catch (err) {
-      console.error('Error delivering order:', err);
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(msg || (lang === 'bn' ? 'ডেলিভারি ব্যর্থ হয়েছে' : 'Delivery failed'), 'error');
+      console.error('DELIVERY FAILED', err);
+      const errMsg = err instanceof Error ? err.message : String(err);
+      showToast(`ডেলিভারি ত্রুটি: ${errMsg}`, 'error');
     }
   };
 
@@ -2387,54 +2327,33 @@ export const AdminDashboardModal: React.FC = () => {
               );
             })()}
 
-            {/* Delivery Type */}
+            {/* Delivery Method */}
             <div>
-              <label className="block text-xs text-slate-400 mb-1">Delivery Type</label>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { id: 'credentials', label: 'Login Credentials' },
-                  { id: 'license_key', label: 'License Key' },
-                  { id: 'link', label: 'Invite / Direct Link' },
-                  { id: 'file', label: 'Download File URL' },
-                ].map((type) => (
-                  <button
-                    key={type.id}
-                    type="button"
-                    onClick={() => setDeliveryMode(type.id as any)}
-                    className={`px-3 py-2 rounded-xl text-xs font-semibold border text-left transition-colors cursor-pointer ${
-                      deliveryMode === type.id
-                        ? 'bg-emerald-600/20 border-emerald-500 text-emerald-300'
-                        : 'bg-slate-800 border-slate-700 text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    {type.label}
-                  </button>
-                ))}
+              <label className="block text-xs text-slate-400 mb-1">Delivery Method</label>
+              <div className="inline-flex items-center gap-2 px-3 py-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-xs font-bold">
+                <ExternalLink className="w-4 h-4 text-emerald-400" />
+                <span>External Access Link (Google Drive / Resource URL)</span>
               </div>
             </div>
 
-            {/* Delivery Content */}
+            {/* Delivery Link Input */}
             <div>
               <label className="block text-xs font-semibold text-slate-300 mb-1">
-                {deliveryMode === 'credentials'
-                  ? 'Account Email & Password'
-                  : deliveryMode === 'license_key'
-                  ? 'Activation / License Key'
-                  : 'Direct Link or Download URL'}
+                Delivery Link *
               </label>
-              <textarea
-                rows={4}
+              <input
+                type="url"
+                required
                 value={deliveryContentInput}
                 onChange={(e) => setDeliveryContentInput(e.target.value)}
-                placeholder={
-                  deliveryMode === 'credentials'
-                    ? 'Email: user@example.com\nPassword: secret_pass_123\nProfile: 1 (Pin: 1234)'
-                    : deliveryMode === 'license_key'
-                    ? 'XXXX-XXXX-XXXX-XXXX'
-                    : 'https://...'
-                }
-                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-xs text-white font-mono focus:outline-none focus:border-emerald-500 placeholder-slate-500"
+                placeholder="https://drive.google.com/..."
+                className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-emerald-300 font-mono focus:outline-none focus:border-emerald-500 placeholder-slate-500"
               />
+              <p className="text-[11px] text-slate-400 mt-1">
+                {lang === 'bn'
+                  ? 'এই লিংকটি সরাসরি অর্ডারের প্রোডাক্ট থেকে স্বয়ংক্রিয়ভাবে লোড হয়েছে।'
+                  : 'Automatically loaded from the purchased product data.'}
+              </p>
             </div>
 
             {/* Delivery Instructions */}
@@ -2463,17 +2382,17 @@ export const AdminDashboardModal: React.FC = () => {
                 type="button"
                 onClick={handleSaveDeliverySubmit}
                 disabled={isDeliveringOrder}
-                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/30 cursor-pointer disabled:opacity-50 flex items-center gap-2"
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black tracking-wider uppercase shadow-md shadow-emerald-600/30 cursor-pointer disabled:opacity-50 flex items-center gap-2"
               >
                 {isDeliveringOrder ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    Sending...
+                    <span>Delivering...</span>
                   </>
                 ) : (
                   <>
-                    <Send className="w-4 h-4" />
-                    Send Delivery Now
+                    <Truck className="w-4 h-4" />
+                    <span>DELIVER</span>
                   </>
                 )}
               </button>

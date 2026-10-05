@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
   Users,
@@ -35,12 +35,32 @@ import {
   MessageSquare,
   Sparkles,
   LifeBuoy,
+  Building2,
+  Database,
+  UploadCloud,
+  DownloadCloud,
+  FileJson,
+  Image as ImageIcon,
+  AlertOctagon,
+  HardDrive,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { Order, OrderStatus, Product, User, AdminUser, DeliveryRecord, Complaint, ComplaintStatus } from '../types';
 import { AdminProductFormModal } from './AdminProductFormModal';
+import { uploadBrandingImage } from '../utils/imageUpload';
+import { validateBackupFile } from '../utils/backupRestore';
 
-type AdminTab = 'dashboard' | 'users' | 'products' | 'orders' | 'deliveries' | 'complaints' | 'settings' | 'admins';
+type AdminTab =
+  | 'dashboard'
+  | 'users'
+  | 'products'
+  | 'orders'
+  | 'deliveries'
+  | 'complaints'
+  | 'business'
+  | 'backup'
+  | 'settings'
+  | 'admins';
 
 export const AdminDashboardModal: React.FC = () => {
   const {
@@ -76,6 +96,9 @@ export const AdminDashboardModal: React.FC = () => {
     updateComplaintByAdmin,
     deleteComplaintByAdmin,
     showToast,
+    exportAllData,
+    formatAllData,
+    restoreAllData,
     lang,
     t,
   } = useStore();
@@ -135,6 +158,55 @@ export const AdminDashboardModal: React.FC = () => {
     deliveryNoticeEn: siteSettings.deliveryNoticeEn || 'Instant digital delivery within 5-15 minutes of payment verification.',
     maintenanceMode: siteSettings.maintenanceMode || false,
   });
+
+  // Business Information & Website Branding State
+  const [businessSettingsForm, setBusinessSettingsForm] = useState({
+    businessName: siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House',
+    businessAddress: siteSettings.businessAddress || 'House #12, Road #4, Dhanmondi, Dhaka-1205, Bangladesh',
+    businessLogo: siteSettings.businessLogo || siteSettings.siteLogo || '',
+    faviconUrl: siteSettings.faviconUrl || '',
+    browserTabTitle: siteSettings.browserTabTitle || 'Minarul Fashion House — Digital App & License Store',
+  });
+  const [logoPreview, setLogoPreview] = useState<string>(siteSettings.businessLogo || siteSettings.siteLogo || '');
+  const [faviconPreview, setFaviconPreview] = useState<string>(siteSettings.faviconUrl || '');
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
+  const [isSavingBusiness, setIsSavingBusiness] = useState(false);
+
+  // Backup, Format & Restore State
+  const [isExporting, setIsExporting] = useState(false);
+  const [isFormatModalOpen, setIsFormatModalOpen] = useState(false);
+  const [formatConfirmText, setFormatConfirmText] = useState('');
+  const [isFormatting, setIsFormatting] = useState(false);
+
+  // Restore State
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoreJson, setRestoreJson] = useState<any | null>(null);
+  const [restoreValidation, setRestoreValidation] = useState<{
+    isValid: boolean;
+    error?: string;
+    summary?: any;
+  } | null>(null);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreProgress, setRestoreProgress] = useState<{
+    current: number;
+    total: number;
+    collection: string;
+  } | null>(null);
+  const [isRestoreConfirmOpen, setIsRestoreConfirmOpen] = useState(false);
+
+  // Sync business settings with Firestore
+  useEffect(() => {
+    setBusinessSettingsForm({
+      businessName: siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House',
+      businessAddress: siteSettings.businessAddress || '',
+      businessLogo: siteSettings.businessLogo || siteSettings.siteLogo || '',
+      faviconUrl: siteSettings.faviconUrl || '',
+      browserTabTitle: siteSettings.browserTabTitle || '',
+    });
+    setLogoPreview(siteSettings.businessLogo || siteSettings.siteLogo || '');
+    setFaviconPreview(siteSettings.faviconUrl || '');
+  }, [siteSettings]);
 
   // Strict Access Guard: Only admin users can render Admin Panel
   if (!isAdminDashboardOpen || !currentUser || currentUser.role !== 'admin') {
@@ -309,6 +381,174 @@ export const AdminDashboardModal: React.FC = () => {
     }
   };
 
+  // --- BUSINESS INFORMATION & BRANDING HANDLERS ---
+  const handleSaveBusinessSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSavingBusiness(true);
+    try {
+      await updateSiteSettings({
+        businessName: businessSettingsForm.businessName.trim(),
+        siteName: businessSettingsForm.businessName.trim(),
+        storeName: businessSettingsForm.businessName.trim(),
+        businessAddress: businessSettingsForm.businessAddress.trim(),
+        businessLogo: logoPreview,
+        siteLogo: logoPreview,
+        faviconUrl: faviconPreview,
+        browserTabTitle: businessSettingsForm.browserTabTitle.trim(),
+      });
+      showToast(
+        lang === 'bn'
+          ? 'ব্যবসায়িক ও ওয়েবসাইট ব্র্যান্ডিং সফলভাবে সংরক্ষিত হয়েছে!'
+          : 'Business & Website branding settings saved successfully!',
+        'success'
+      );
+    } catch (err) {
+      console.error(err);
+      showToast(lang === 'bn' ? 'সেটিংস সংরক্ষণে ব্যর্থ' : 'Failed to save business settings', 'error');
+    } finally {
+      setIsSavingBusiness(false);
+    }
+  };
+
+  const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingLogo(true);
+    try {
+      const url = await uploadBrandingImage(file, 'logo');
+      setLogoPreview(url);
+      setBusinessSettingsForm((prev) => ({ ...prev, businessLogo: url }));
+      showToast(
+        lang === 'bn'
+          ? 'লোগো সফলভাবে লোড হয়েছে। স্থায়ীভাবে সংরক্ষণ করতে "Save Changes" চাপুন।'
+          : 'Logo uploaded. Click "Save Changes" to save permanently.',
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Logo upload error', 'error');
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+
+  const handleRemoveLogo = () => {
+    setLogoPreview('');
+    setBusinessSettingsForm((prev) => ({ ...prev, businessLogo: '' }));
+    showToast(
+      lang === 'bn'
+        ? 'লোগো সরানো হয়েছে। স্থায়ীভাবে কার্যকর করতে "Save Changes" চাপুন।'
+        : 'Logo removed. Click "Save Changes" to apply.',
+      'info'
+    );
+  };
+
+  const handleFaviconFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingFavicon(true);
+    try {
+      const url = await uploadBrandingImage(file, 'favicon');
+      setFaviconPreview(url);
+      setBusinessSettingsForm((prev) => ({ ...prev, faviconUrl: url }));
+      showToast(
+        lang === 'bn'
+          ? 'ফ্যাভিকন সফলভাবে লোড হয়েছে। স্থায়ীভাবে সংরক্ষণ করতে "Save Changes" চাপুন।'
+          : 'Favicon uploaded. Click "Save Changes" to save permanently.',
+        'success'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Favicon upload error', 'error');
+    } finally {
+      setIsUploadingFavicon(false);
+    }
+  };
+
+  const handleRemoveFavicon = () => {
+    setFaviconPreview('');
+    setBusinessSettingsForm((prev) => ({ ...prev, faviconUrl: '' }));
+    showToast(
+      lang === 'bn'
+        ? 'ফ্যাভিকন সরানো হয়েছে। স্থায়ীভাবে কার্যকর করতে "Save Changes" চাপুন।'
+        : 'Favicon removed. Click "Save Changes" to apply.',
+      'info'
+    );
+  };
+
+  // --- BACKUP & RESTORE HANDLERS ---
+  const handleDownloadBackup = async () => {
+    setIsExporting(true);
+    try {
+      await exportAllData();
+    } catch (err: any) {
+      showToast(err.message || 'Backup failed', 'error');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleConfirmFormatData = async () => {
+    if (formatConfirmText !== 'DELETE') {
+      showToast(lang === 'bn' ? 'মুছে ফেলতে "DELETE" লিখুন।' : 'Please type DELETE to confirm.', 'error');
+      return;
+    }
+    setIsFormatting(true);
+    try {
+      await formatAllData();
+      setIsFormatModalOpen(false);
+      setFormatConfirmText('');
+    } catch (err: any) {
+      showToast(err.message || 'Format failed', 'error');
+    } finally {
+      setIsFormatting(false);
+    }
+  };
+
+  const handleRestoreFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setRestoreFile(file);
+    setRestoreProgress(null);
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const parsed = JSON.parse(event.target?.result as string);
+        setRestoreJson(parsed);
+        const validation = validateBackupFile(parsed);
+        setRestoreValidation(validation);
+        if (!validation.isValid) {
+          showToast(validation.error || 'Invalid backup file structure', 'error');
+        }
+      } catch (parseErr: any) {
+        setRestoreJson(null);
+        setRestoreValidation({
+          isValid: false,
+          error: `Corrupted JSON file: ${parseErr.message}`,
+        });
+        showToast('Invalid JSON file format', 'error');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleExecuteRestore = async () => {
+    if (!restoreJson || !restoreValidation?.isValid) {
+      showToast(lang === 'bn' ? 'সঠিক ব্যাকআপ ফাইল সিলেক্ট করুন' : 'Select a valid backup file first', 'error');
+      return;
+    }
+    setIsRestoring(true);
+    try {
+      await restoreAllData(restoreJson, (progress) => {
+        setRestoreProgress(progress);
+      });
+      setIsRestoreConfirmOpen(false);
+    } catch (err: any) {
+      showToast(`Restore error: ${err.message}`, 'error');
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
   const handleCopyText = (text: string) => {
     navigator.clipboard.writeText(text);
     showToast(lang === 'bn' ? 'কপি করা হয়েছে!' : 'Copied to clipboard!', 'success');
@@ -323,13 +563,23 @@ export const AdminDashboardModal: React.FC = () => {
         {/* HEADER BAR */}
         <header className="px-6 py-4 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
-              <ShieldCheck className="w-6 h-6" />
-            </div>
+            {siteSettings.businessLogo || siteSettings.siteLogo ? (
+              <div className="w-10 h-10 rounded-xl bg-white border border-slate-700 p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-xs">
+                <img
+                  src={siteSettings.businessLogo || siteSettings.siteLogo}
+                  alt={siteSettings.businessName || siteSettings.siteName || 'Logo'}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
+                <ShieldCheck className="w-6 h-6" />
+              </div>
+            )}
             <div>
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-bold text-white tracking-tight">
-                  {lang === 'bn' ? 'অ্যাডমিন কন্ট্রোল প্যানেল' : 'Admin Control Panel'}
+                  {siteSettings.businessName || siteSettings.siteName || (lang === 'bn' ? 'অ্যাডমিন কন্ট্রোল প্যানেল' : 'Admin Control Panel')}
                 </h1>
                 <span className="px-2 py-0.5 text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 rounded-full">
                   Verified Admin
@@ -452,20 +702,44 @@ export const AdminDashboardModal: React.FC = () => {
             </button>
 
             <button
+              onClick={() => setActiveTab('business')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap cursor-pointer ${
+                activeTab === 'business'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <Building2 className="w-4 h-4 shrink-0 text-emerald-400" />
+              <span>🏢 Business Settings</span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('backup')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap cursor-pointer ${
+                activeTab === 'backup'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <Database className="w-4 h-4 shrink-0 text-cyan-400" />
+              <span>💾 Backup & Restore</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('settings')}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === 'settings'
                   ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
                   : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
               }`}
             >
               <Settings className="w-4 h-4 shrink-0" />
-              <span>⚙️ Settings</span>
+              <span>💳 Payment & Notices</span>
             </button>
 
             <button
               onClick={() => setActiveTab('admins')}
-              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap ${
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap cursor-pointer ${
                 activeTab === 'admins'
                   ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
                   : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
@@ -1926,6 +2200,506 @@ export const AdminDashboardModal: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {/* ---------------------------------------------------- */}
+            {/* TAB: BUSINESS & WEBSITE SETTINGS */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'business' && (
+              <div className="space-y-6 max-w-4xl">
+                <div>
+                  <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                    <Building2 className="w-5 h-5 text-emerald-400" />
+                    <span>
+                      {lang === 'bn'
+                        ? 'ব্যবসায়িক তথ্য ও ওয়েবসাইট ব্র্যান্ডিং'
+                        : 'Business & Website Settings'}
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {lang === 'bn'
+                      ? 'কোড পরিবর্তন ছাড়াই ব্যবসার নাম, ঠিকানা, লোগো, ফ্যাভিকন ও ব্রাউজার ট্যাব টাইটেল কাস্টমাইজ করুন।'
+                      : 'Customize your business name, physical address, logo, favicon, and browser title without editing code.'}
+                  </p>
+                </div>
+
+                <form onSubmit={handleSaveBusinessSettings} className="space-y-5">
+                  {/* General Business Identity */}
+                  <div className="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-5 space-y-4">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-700/60 pb-2">
+                      <Building2 className="w-4 h-4 text-emerald-400" />
+                      <span>{lang === 'bn' ? 'ব্যবসায়িক পরিচিতি' : 'Business Identity & Info'}</span>
+                    </h3>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Business Name */}
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                          {lang === 'bn' ? 'ব্যবসায়ের নাম (Business Name)' : 'Business Name'} *
+                        </label>
+                        <input
+                          type="text"
+                          required
+                          value={businessSettingsForm.businessName}
+                          onChange={(e) =>
+                            setBusinessSettingsForm({
+                              ...businessSettingsForm,
+                              businessName: e.target.value,
+                            })
+                          }
+                          placeholder="e.g. Minarul Fashion House"
+                          className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-semibold"
+                        />
+                        <span className="text-[11px] text-slate-400 mt-1 block">
+                          {lang === 'bn'
+                            ? 'হেডার, ফুটার, লগইন, ইনভয়েস এবং অর্ডারে প্রদর্শিত হবে।'
+                            : 'Appears in Header, Footer, Login/Register, Invoice, and Order confirmation.'}
+                        </span>
+                      </div>
+
+                      {/* Browser Tab Title */}
+                      <div>
+                        <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                          {lang === 'bn' ? 'ব্রাউজার ট্যাব টাইটেল (Browser Tab Title)' : 'Browser Tab Title'}
+                        </label>
+                        <input
+                          type="text"
+                          value={businessSettingsForm.browserTabTitle}
+                          onChange={(e) =>
+                            setBusinessSettingsForm({
+                              ...businessSettingsForm,
+                              browserTabTitle: e.target.value,
+                            })
+                          }
+                          placeholder="e.g. Minarul Fashion House — Digital App & License Store"
+                          className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                        />
+                        <span className="text-[11px] text-slate-400 mt-1 block">
+                          {lang === 'bn'
+                            ? 'ব্রাউজারের ট্যাব বারে এই টাইটেলটি স্বয়ংক্রিয়ভাবে দেখাবে।'
+                            : 'Dynamically updates document.title shown in browser tabs.'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Business Address */}
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                        {lang === 'bn' ? 'ব্যবসায়ের সম্পূর্ণ ঠিকানা (Business Address)' : 'Business Physical Address'}
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={businessSettingsForm.businessAddress}
+                        onChange={(e) =>
+                          setBusinessSettingsForm({
+                            ...businessSettingsForm,
+                            businessAddress: e.target.value,
+                          })
+                        }
+                        placeholder="House #12, Road #4, Dhanmondi, Dhaka-1205, Bangladesh"
+                        className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 leading-relaxed"
+                      />
+                      <span className="text-[11px] text-slate-400 mt-1 block">
+                        {lang === 'bn'
+                          ? 'ফুটার, রসিদ এবং ইনভয়েসে গ্রাহককে এই ঠিকানা দেখানো হবে।'
+                          : 'Displayed on website footer, invoices, and customer receipt details.'}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Logo & Favicon Assets */}
+                  <div className="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-5 space-y-4">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2 border-b border-slate-700/60 pb-2">
+                      <ImageIcon className="w-4 h-4 text-emerald-400" />
+                      <span>{lang === 'bn' ? 'ব্র্যান্ডিং ও লোগো ইমেজ' : 'Branding Assets (Logo & Favicon)'}</span>
+                    </h3>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                      {/* Business Logo Upload & Preview */}
+                      <div className="bg-slate-900/80 border border-slate-700/80 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span>{lang === 'bn' ? 'ব্যবসায়িক লোগো (Business Logo)' : 'Business Logo'}</span>
+                          </label>
+                          <span className="text-[10px] text-slate-400">PNG, JPG, WEBP</span>
+                        </div>
+
+                        {/* Preview Area */}
+                        <div className="h-32 rounded-xl bg-slate-950/80 border border-dashed border-slate-700 flex items-center justify-center p-3 relative overflow-hidden group">
+                          {logoPreview ? (
+                            <img
+                              src={logoPreview}
+                              alt="Business Logo Preview"
+                              className="max-h-full max-w-full object-contain drop-shadow"
+                            />
+                          ) : (
+                            <div className="text-center text-slate-500 space-y-1">
+                              <ImageIcon className="w-8 h-8 mx-auto opacity-40 text-slate-400" />
+                              <span className="text-xs block">No logo selected</span>
+                            </div>
+                          )}
+                          {isUploadingLogo && (
+                            <div className="absolute inset-0 bg-black/70 flex items-center justify-center text-emerald-400 text-xs font-bold gap-2">
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <span>Uploading...</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <label className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm">
+                            <UploadCloud className="w-3.5 h-3.5" />
+                            <span>{logoPreview ? 'Change Logo' : 'Upload Logo'}</span>
+                            <input
+                              type="file"
+                              accept="image/png,image/jpeg,image/jpg,image/webp"
+                              onChange={handleLogoFileChange}
+                              className="hidden"
+                            />
+                          </label>
+
+                          {logoPreview && (
+                            <button
+                              type="button"
+                              onClick={handleRemoveLogo}
+                              className="py-2 px-3 bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                              title="Remove Logo"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Remove Logo</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Favicon Upload & Preview */}
+                      <div className="bg-slate-900/80 border border-slate-700/80 rounded-xl p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                            <span>{lang === 'bn' ? 'ওয়েবসাইট ফ্যাভিকন (Website Favicon)' : 'Website Favicon'}</span>
+                          </label>
+                          <span className="text-[10px] text-slate-400">PNG, ICO, WEBP</span>
+                        </div>
+
+                        {/* Preview Area */}
+                        <div className="h-32 rounded-xl bg-slate-950/80 border border-dashed border-slate-700 flex items-center justify-center p-3 relative overflow-hidden group">
+                          {faviconPreview ? (
+                            <div className="flex items-center gap-4">
+                              <div className="w-10 h-10 rounded-lg bg-white p-1 border border-slate-600 flex items-center justify-center shadow">
+                                <img
+                                  src={faviconPreview}
+                                  alt="Favicon 32x32"
+                                  className="w-full h-full object-contain"
+                                />
+                              </div>
+                              <div className="text-left text-xs text-slate-300">
+                                <span className="font-semibold block text-emerald-400">Active Favicon</span>
+                                <span className="text-[11px] text-slate-400">Live preview in browser tab</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-center text-slate-500 space-y-1">
+                              <HardDrive className="w-8 h-8 mx-auto opacity-40 text-slate-400" />
+                              <span className="text-xs block">No favicon selected</span>
+                            </div>
+                          )}
+                          {isUploadingFavicon && (
+                            <div className="absolute inset-0 bg-black/70 flex items-center justify-center text-emerald-400 text-xs font-bold gap-2">
+                              <RefreshCw className="w-4 h-4 animate-spin" />
+                              <span>Uploading...</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex items-center gap-2 pt-1">
+                          <label className="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors shadow-sm">
+                            <UploadCloud className="w-3.5 h-3.5" />
+                            <span>{faviconPreview ? 'Change Favicon' : 'Upload Favicon'}</span>
+                            <input
+                              type="file"
+                              accept="image/png,image/x-icon,image/webp,image/svg+xml,image/jpeg"
+                              onChange={handleFaviconFileChange}
+                              className="hidden"
+                            />
+                          </label>
+
+                          {faviconPreview && (
+                            <button
+                              type="button"
+                              onClick={handleRemoveFavicon}
+                              className="py-2 px-3 bg-red-600/20 hover:bg-red-600/30 text-red-300 border border-red-500/30 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                              title="Remove Favicon"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Remove Favicon</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Submit Button */}
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={isSavingBusiness}
+                      className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-sm font-bold shadow-lg shadow-emerald-600/20 transition-all cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      {isSavingBusiness ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>{lang === 'bn' ? 'সংরক্ষণ করা হচ্ছে...' : 'Saving Changes...'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-4 h-4" />
+                          <span>{lang === 'bn' ? 'পরিবর্তনগুলো সংরক্ষণ করুন' : 'Save Changes'}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------- */}
+            {/* TAB: BACKUP & RESTORE */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'backup' && (
+              <div className="space-y-6 max-w-4xl">
+                <div>
+                  <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                    <Database className="w-5 h-5 text-cyan-400" />
+                    <span>
+                      {lang === 'bn'
+                        ? 'সম্পূর্ণ ওয়েবসাইট ডেটা ব্যাকআপ ও পুনরুদ্ধার'
+                        : 'Complete Website Data Backup & Restore'}
+                    </span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    {lang === 'bn'
+                      ? 'সম্পূর্ণ ফায়ারবেস ডেটাবেস ব্যাকআপ হিসেবে ডাউনলোড করুন, পূর্বে ডাউনলোড করা ফাইল থেকে রিস্টোর করুন অথবা ডেটা রিসেট করুন।'
+                      : 'Download a full JSON database snapshot, restore previous backups safely, or format business records.'}
+                  </p>
+                </div>
+
+                {/* Section 1: Data Backup (Download) */}
+                <div className="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-5 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <DownloadCloud className="w-4 h-4 text-cyan-400" />
+                        <span>{lang === 'bn' ? '১. সম্পূর্ণ সিস্টেম ব্যাকআপ ডাউনলোড' : '1. Full System Backup (Download All Data)'}</span>
+                      </h3>
+                      <p className="text-xs text-slate-400 leading-relaxed">
+                        {lang === 'bn'
+                          ? 'ক্লাউড ফায়ারস্টোরে সংরক্ষিত সব প্রডাক্ট, অর্ডার, গ্রাহক তথ্য, ডিজিটাল ডেলিভারি লিংক, কুপন এবং সেটিংস একটি সিঙ্গেল সুরক্ষিত JSON ফাইলে এক্সপোর্ট করুন।'
+                          : 'Export all Firestore collections including Products, Orders, Users, Deliveries, Settings, Coupons, Accounting, Stock Movements, and Complaints into a JSON backup file.'}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isExporting}
+                      onClick={handleDownloadBackup}
+                      className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-cyan-600/20 cursor-pointer shrink-0 transition-colors"
+                    >
+                      {isExporting ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                          <span>Generating Backup...</span>
+                        </>
+                      ) : (
+                        <>
+                          <DownloadCloud className="w-4 h-4" />
+                          <span>Download All Data</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Included collections tags */}
+                  <div className="bg-slate-900/60 p-3 rounded-xl border border-slate-800">
+                    <span className="text-[11px] font-semibold text-slate-400 block mb-2">
+                      Backed-up Collections ({products.length} Products, {orders.length} Orders, {allUsers.length} Users):
+                    </span>
+                    <div className="flex flex-wrap gap-1.5 text-[10px] font-mono text-cyan-300">
+                      {[
+                        'products',
+                        'orders',
+                        'deliveries',
+                        'complaints',
+                        'settings',
+                        'users',
+                        'admins',
+                        'coupons',
+                        'stockMovements',
+                        'sales',
+                        'purchases',
+                        'expenses',
+                      ].map((col) => (
+                        <span
+                          key={col}
+                          className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300"
+                        >
+                          {col}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section 2: Restore Data from Backup */}
+                <div className="bg-slate-800/60 border border-slate-700/60 rounded-2xl p-5 space-y-4">
+                  <div className="space-y-1">
+                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                      <UploadCloud className="w-4 h-4 text-emerald-400" />
+                      <span>{lang === 'bn' ? '২. ব্যাকআপ ফাইল থেকে ডেটা রিস্টোর' : '2. Restore Database from Backup File'}</span>
+                    </h3>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      {lang === 'bn'
+                        ? 'পূর্বে ডাউনলোড করা JSON ব্যাকআপ ফাইল আপলোড করে ডেটাবেজ পুনরুদ্ধার করুন।'
+                        : 'Upload a previously generated backup JSON file to restore collections and records back into Firestore.'}
+                    </p>
+                  </div>
+
+                  {/* File Selector */}
+                  <div className="border border-dashed border-slate-700 rounded-xl p-5 bg-slate-900/50 text-center space-y-2">
+                    <FileJson className="w-8 h-8 text-emerald-400 mx-auto opacity-70" />
+                    <div>
+                      <label className="inline-flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold cursor-pointer border border-slate-600 transition-colors">
+                        <UploadCloud className="w-4 h-4 text-emerald-400" />
+                        <span>Select JSON Backup File</span>
+                        <input
+                          type="file"
+                          accept=".json,application/json"
+                          onChange={handleRestoreFileSelect}
+                          className="hidden"
+                        />
+                      </label>
+                    </div>
+                    {restoreFile && (
+                      <p className="text-xs text-slate-300 font-mono">
+                        Selected: <strong className="text-emerald-400">{restoreFile.name}</strong> ({(restoreFile.size / 1024).toFixed(1)} KB)
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Validation Summary Card */}
+                  {restoreValidation && (
+                    <div
+                      className={`p-4 rounded-xl border space-y-3 ${
+                        restoreValidation.isValid
+                          ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-200'
+                          : 'bg-red-950/20 border-red-500/40 text-red-200'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 text-xs font-bold">
+                        {restoreValidation.isValid ? (
+                          <>
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                            <span>Valid Backup File Structure</span>
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle className="w-4 h-4 text-red-400" />
+                            <span>{restoreValidation.error || 'Invalid Backup File'}</span>
+                          </>
+                        )}
+                      </div>
+
+                      {restoreValidation.isValid && restoreValidation.summary && (
+                        <div className="space-y-3 text-xs">
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-slate-300 bg-slate-900/70 p-3 rounded-lg border border-slate-800">
+                            <div>
+                              <span className="text-[10px] text-slate-400 block uppercase">Project</span>
+                              <span className="font-bold text-white">{restoreValidation.summary.projectName}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-400 block uppercase">Version</span>
+                              <span className="font-bold text-white">{restoreValidation.summary.backupVersion}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-400 block uppercase">Total Documents</span>
+                              <span className="font-bold text-emerald-400 font-mono">
+                                {restoreValidation.summary.totalDocuments}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-slate-400 block uppercase">Created At</span>
+                              <span className="font-mono text-[11px] text-slate-300">
+                                {new Date(restoreValidation.summary.createdAt).toLocaleDateString()}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Breakdown */}
+                          <div>
+                            <span className="text-[11px] font-semibold text-slate-400 block mb-1.5">
+                              Documents Per Collection:
+                            </span>
+                            <div className="flex flex-wrap gap-1.5 font-mono text-[11px]">
+                              {Object.entries(restoreValidation.summary.collectionCounts).map(
+                                ([cName, cCount]) => (
+                                  <span
+                                    key={cName}
+                                    className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-200"
+                                  >
+                                    {cName}: <strong className="text-emerald-400">{cCount as number}</strong>
+                                  </span>
+                                )
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="pt-2 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => setIsRestoreConfirmOpen(true)}
+                              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-emerald-600/30 cursor-pointer transition-colors"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                              <span>Preview & Execute Restore</span>
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Section 3: Format Business Data (Factory Reset) */}
+                <div className="bg-red-950/20 border border-red-500/40 rounded-2xl p-5 space-y-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <h3 className="text-sm font-bold text-red-400 flex items-center gap-2">
+                        <AlertOctagon className="w-4 h-4 text-red-400" />
+                        <span>{lang === 'bn' ? '৩. ব্যবসায়িক ডেটা ফরম্যাট (ফ্যাক্টরি রিসেট)' : '3. Format Business Data (Factory Reset)'}</span>
+                      </h3>
+                      <p className="text-xs text-red-300/80 leading-relaxed">
+                        {lang === 'bn'
+                          ? 'সতর্কতা: এটি পণ্যের তালিকা, কাস্টমার অর্ডার, ডিজিটাল ডেলিভারি লগ, অভিযোগ টিকেট এবং ট্রানজ্যাকশন স্থায়ীভাবে মুছে ফেলবে। অ্যাডমিন অ্যাকাউন্ট সুরক্ষিত থাকবে।'
+                          : 'Warning: This action will permanently erase all business orders, products, deliveries, complaints, coupons, and non-admin customers. Admin authentication is preserved.'}
+                      </p>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormatConfirmText('');
+                        setIsFormatModalOpen(true);
+                      }}
+                      className="px-4 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md shadow-red-600/30 cursor-pointer shrink-0 transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Format Data...</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </main>
         </div>
       </div>
@@ -2426,17 +3200,21 @@ export const AdminDashboardModal: React.FC = () => {
 
             <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 relative group">
               <div className="text-xs font-mono text-emerald-400 whitespace-pre-wrap select-all">
-                {viewDeliveryContentModal.credentials ||
+                {viewDeliveryContentModal.externalAccessUrl ||
+                  (viewDeliveryContentModal as any).externalAccessLink ||
                   viewDeliveryContentModal.downloadUrl ||
+                  viewDeliveryContentModal.credentials ||
                   viewDeliveryContentModal.licenseKey ||
-                  'No delivery content recorded.'}
+                  'No delivery link recorded.'}
               </div>
 
               <button
                 onClick={() =>
                   handleCopyText(
-                    viewDeliveryContentModal.credentials ||
+                    viewDeliveryContentModal.externalAccessUrl ||
+                      (viewDeliveryContentModal as any).externalAccessLink ||
                       viewDeliveryContentModal.downloadUrl ||
+                      viewDeliveryContentModal.credentials ||
                       viewDeliveryContentModal.licenseKey ||
                       ''
                   )
@@ -2461,6 +3239,191 @@ export const AdminDashboardModal: React.FC = () => {
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold cursor-pointer"
               >
                 Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* MODAL: CONFIRM RESTORE DATABASE */}
+      {/* ---------------------------------------------------- */}
+      {isRestoreConfirmOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg p-6 space-y-5 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-white flex items-center gap-2 text-base">
+                <RefreshCw className={`w-5 h-5 text-emerald-400 ${isRestoring ? 'animate-spin' : ''}`} />
+                <span>Confirm Database Restore</span>
+              </h3>
+              {!isRestoring && (
+                <button
+                  onClick={() => setIsRestoreConfirmOpen(false)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-300">
+              <p>
+                You are about to restore{' '}
+                <strong className="text-emerald-400 font-bold">
+                  {restoreValidation?.summary?.totalDocuments || 0} documents
+                </strong>{' '}
+                from backup file{' '}
+                <strong className="text-white">{restoreFile?.name}</strong>.
+              </p>
+
+              <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-amber-200 text-xs space-y-1">
+                <span className="font-bold flex items-center gap-1 text-amber-400">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  Restore Warning:
+                </span>
+                <p className="leading-relaxed">
+                  Restoring will write records directly to Firestore using their original document IDs.
+                  Existing documents with identical IDs will be overwritten or updated.
+                </p>
+              </div>
+
+              {/* Progress Bar during Restore */}
+              {isRestoring && (
+                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2">
+                  <div className="flex justify-between text-xs font-semibold">
+                    <span className="text-emerald-400 flex items-center gap-1.5">
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      Restoring {restoreProgress?.collection ? `[${restoreProgress.collection}]` : ''}...
+                    </span>
+                    <span className="font-mono text-slate-300">
+                      {restoreProgress?.current || 0} / {restoreProgress?.total || 0}
+                    </span>
+                  </div>
+
+                  <div className="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-300 rounded-full"
+                      style={{
+                        width: `${
+                          restoreProgress && restoreProgress.total > 0
+                            ? Math.min(100, Math.round((restoreProgress.current / restoreProgress.total) * 100))
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                disabled={isRestoring}
+                onClick={() => setIsRestoreConfirmOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={isRestoring}
+                onClick={handleExecuteRestore}
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-emerald-600/30 cursor-pointer"
+              >
+                {isRestoring ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Restoring to Firestore...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Confirm & Execute Restore</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---------------------------------------------------- */}
+      {/* MODAL: CONFIRM FORMAT BUSINESS DATA */}
+      {/* ---------------------------------------------------- */}
+      {isFormatModalOpen && (
+        <div className="fixed inset-0 z-60 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-slate-900 border border-red-500/60 rounded-2xl w-full max-w-md p-6 space-y-4 text-slate-100 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-red-500/30 pb-3">
+              <h3 className="font-bold text-red-400 flex items-center gap-2 text-base">
+                <AlertOctagon className="w-5 h-5" />
+                <span>Format All Business Data</span>
+              </h3>
+              {!isFormatting && (
+                <button
+                  onClick={() => setIsFormatModalOpen(false)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-3 text-xs text-slate-300">
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 text-red-300 space-y-1">
+                <strong className="block text-red-400 font-bold uppercase">Irreversible Action:</strong>
+                <p className="leading-relaxed">
+                  This will permanently delete all Products, Orders, Digital Deliveries, Coupons,
+                  Accounting movements, and non-admin customers from Firestore.
+                </p>
+                <p className="text-[11px] text-emerald-400 font-semibold pt-1">
+                  ✓ Administrator accounts and administrative access privileges will be protected and preserved.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  Type <span className="text-red-400 font-mono font-bold">DELETE</span> to confirm:
+                </label>
+                <input
+                  type="text"
+                  value={formatConfirmText}
+                  onChange={(e) => setFormatConfirmText(e.target.value)}
+                  placeholder="DELETE"
+                  disabled={isFormatting}
+                  className="w-full px-3 py-2 bg-slate-950 border border-red-500/40 rounded-xl text-xs text-white placeholder-slate-600 focus:outline-none focus:border-red-500 font-mono font-bold tracking-wider"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                disabled={isFormatting}
+                onClick={() => setIsFormatModalOpen(false)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={formatConfirmText !== 'DELETE' || isFormatting}
+                onClick={handleConfirmFormatData}
+                className="px-5 py-2.5 bg-red-600 hover:bg-red-500 disabled:opacity-30 disabled:cursor-not-allowed text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg shadow-red-600/30 cursor-pointer"
+              >
+                {isFormatting ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Formatting Data...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    <span>Permanently Format Data</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

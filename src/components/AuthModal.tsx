@@ -11,6 +11,7 @@ export const AuthModal: React.FC = () => {
     loginWithGoogle,
     loginAsDemo,
     pendingCheckout,
+    siteSettings,
     lang,
     t,
   } = useStore();
@@ -70,18 +71,29 @@ export const AuthModal: React.FC = () => {
       >
         {/* Header */}
         <div className="p-6 bg-gradient-to-r from-emerald-600 to-teal-700 text-white flex items-center justify-between">
-          <div>
-            <span className="text-xs font-bold text-emerald-200 uppercase tracking-wider block">
-              Digital Product Sheba
-            </span>
-            <h2 className="text-xl font-black">{isRegister ? t.register : t.login}</h2>
-            {pendingCheckout && (
-              <p className="text-xs text-emerald-100 mt-1">
-                {lang === 'bn'
-                  ? 'অর্ডারটি সম্পন্ন করতে সাইন ইন করুন'
-                  : 'Sign in to complete your checkout'}
-              </p>
-            )}
+          <div className="flex items-center gap-3">
+            {siteSettings.businessLogo || siteSettings.siteLogo ? (
+              <div className="w-10 h-10 rounded-xl bg-white p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-xs">
+                <img
+                  src={siteSettings.businessLogo || siteSettings.siteLogo}
+                  alt={siteSettings.businessName || siteSettings.siteName || 'Logo'}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            ) : null}
+            <div>
+              <span className="text-xs font-bold text-emerald-200 uppercase tracking-wider block">
+                {siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House'}
+              </span>
+              <h2 className="text-xl font-black">{isRegister ? t.register : t.login}</h2>
+              {pendingCheckout && (
+                <p className="text-xs text-emerald-100 mt-1">
+                  {lang === 'bn'
+                    ? 'অর্ডারটি সম্পন্ন করতে সাইন ইন করুন'
+                    : 'Sign in to complete your checkout'}
+                </p>
+              )}
+            </div>
           </div>
 
           <button

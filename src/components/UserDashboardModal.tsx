@@ -21,6 +21,7 @@ import {
   FileText,
   MessageSquare,
   Edit2,
+  Printer,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 import { ComplaintStatus } from '../types';
@@ -37,6 +38,7 @@ export const UserDashboardModal: React.FC = () => {
     submitComplaint,
     updateCustomerProfile,
     showToast,
+    siteSettings,
     lang,
     t,
   } = useStore();
@@ -183,12 +185,24 @@ export const UserDashboardModal: React.FC = () => {
         {/* Header */}
         <div className="p-4 sm:p-6 border-b border-gray-100 flex items-center justify-between bg-gray-50/80 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg shadow-xs">
-              {currentUser.name.charAt(0).toUpperCase()}
-            </div>
+            {siteSettings.businessLogo || siteSettings.siteLogo ? (
+              <div className="w-10 h-10 rounded-2xl bg-white border border-gray-200 p-1 flex items-center justify-center shrink-0 overflow-hidden shadow-xs">
+                <img
+                  src={siteSettings.businessLogo || siteSettings.siteLogo}
+                  alt={siteSettings.businessName || siteSettings.siteName || 'Logo'}
+                  className="w-full h-full object-contain"
+                />
+              </div>
+            ) : (
+              <div className="w-10 h-10 rounded-2xl bg-emerald-600 text-white flex items-center justify-center font-bold text-lg shadow-xs">
+                {currentUser.name.charAt(0).toUpperCase()}
+              </div>
+            )}
             <div>
               <div className="flex items-center gap-2">
-                <h2 className="text-base sm:text-lg font-black text-gray-900">{t.dashboard}</h2>
+                <h2 className="text-base sm:text-lg font-black text-gray-900">
+                  {siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House'} — {t.dashboard}
+                </h2>
                 <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
                   {currentUser.role}
                 </span>

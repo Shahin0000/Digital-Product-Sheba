@@ -70,12 +70,27 @@ export const Header: React.FC = () => {
               }}
               className="text-left flex items-center gap-2.5 group cursor-pointer focus:outline-hidden"
             >
-              <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-md shadow-emerald-500/20 group-hover:scale-105 transition-transform">
-                <span className="font-black text-xl tracking-tighter">DPS</span>
-              </div>
+              {siteSettings.businessLogo || siteSettings.siteLogo ? (
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl border border-gray-200 bg-white p-1 flex items-center justify-center overflow-hidden shadow-xs group-hover:scale-105 transition-transform">
+                  <img
+                    src={siteSettings.businessLogo || siteSettings.siteLogo}
+                    alt={siteSettings.businessName || siteSettings.siteName || 'Business Logo'}
+                    className="w-full h-full object-contain rounded-lg"
+                  />
+                </div>
+              ) : (
+                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-md shadow-emerald-500/20 group-hover:scale-105 transition-transform font-black text-lg">
+                  {(siteSettings.businessName || siteSettings.siteName || 'MFH')
+                    .split(' ')
+                    .map((w) => w[0])
+                    .join('')
+                    .substring(0, 3)
+                    .toUpperCase()}
+                </div>
+              )}
               <div className="flex flex-col">
                 <span className="font-extrabold text-base sm:text-xl text-gray-900 tracking-tight leading-none group-hover:text-emerald-600 transition-colors">
-                  {lang === 'bn' ? 'ডিজিটাল প্রোডাক্ট সেবা' : 'Digital Product Sheba'}
+                  {siteSettings.businessName || siteSettings.siteName || (lang === 'bn' ? 'ডিজিটাল প্রোডাক্ট সেবা' : 'Minarul Fashion House')}
                 </span>
                 <span className="text-[10px] sm:text-xs text-gray-500 font-medium tracking-wide mt-1">
                   {lang === 'bn' ? 'বিশ্বস্ত অ্যাপস ও সাবস্ক্রিপশন' : 'Digital App & License Store'}

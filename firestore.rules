@@ -105,5 +105,24 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    // 9. Coupons collection (publicly readable for checkout, admin managed)
+    match /coupons/{couponId} {
+      allow read: if true;
+      allow write: if isValidId(couponId) && isAdmin();
+    }
+
+    // 10. Business & accounting collections
+    match /sales/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /purchases/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /suppliers/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /supplierPayments/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /expenses/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /stockMovements/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /returns/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /payments/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /accounts/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /transactions/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+    match /cashTransactions/{id} { allow read, write: if isValidId(id) && isAdmin(); }
   }
 }

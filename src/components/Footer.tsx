@@ -9,6 +9,7 @@ import {
   Sparkles,
   Lock,
   ArrowUp,
+  MapPin,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
 
@@ -85,11 +86,26 @@ export const Footer: React.FC = () => {
           {/* Brand Col */}
           <div className="md:col-span-1 space-y-4">
             <div className="flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-black text-lg">
-                DPS
-              </div>
+              {siteSettings.businessLogo || siteSettings.siteLogo ? (
+                <div className="w-10 h-10 rounded-xl bg-white p-1 border border-slate-800 flex items-center justify-center overflow-hidden">
+                  <img
+                    src={siteSettings.businessLogo || siteSettings.siteLogo}
+                    alt={siteSettings.businessName || siteSettings.siteName || 'Logo'}
+                    className="w-full h-full object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-black text-sm">
+                  {(siteSettings.businessName || siteSettings.siteName || 'MFH')
+                    .split(' ')
+                    .map((w) => w[0])
+                    .join('')
+                    .substring(0, 3)
+                    .toUpperCase()}
+                </div>
+              )}
               <span className="font-black text-lg text-white tracking-tight">
-                {lang === 'bn' ? 'ডিজিটাল প্রোডাক্ট সেবা' : 'Digital Product Sheba'}
+                {siteSettings.businessName || siteSettings.siteName || (lang === 'bn' ? 'ডিজিটাল প্রোডাক্ট সেবা' : 'Minarul Fashion House')}
               </span>
             </div>
 
@@ -186,13 +202,19 @@ export const Footer: React.FC = () => {
               </span>
             </div>
 
-            <div className="pt-2 text-xs text-gray-400 space-y-1">
+            <div className="pt-2 text-xs text-gray-400 space-y-1.5">
+              {siteSettings.businessAddress && (
+                <p className="flex items-start gap-1.5 leading-snug">
+                  <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                  <span>{siteSettings.businessAddress}</span>
+                </p>
+              )}
               <p className="flex items-center gap-1.5">
-                <Phone className="w-3.5 h-3.5 text-emerald-400" />
+                <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span>{siteSettings.whatsappSupportNumber}</span>
               </p>
               <p className="flex items-center gap-1.5">
-                <Mail className="w-3.5 h-3.5 text-emerald-400" />
+                <Mail className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                 <span>{siteSettings.supportEmail}</span>
               </p>
             </div>
@@ -201,7 +223,9 @@ export const Footer: React.FC = () => {
 
         {/* Bottom copyright */}
         <div className="border-t border-slate-900 mt-8 pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-gray-500 gap-3">
-          <p>© 2026 Digital Product Sheba. All rights reserved. Made for Bangladesh.</p>
+          <p>
+            © {new Date().getFullYear()} {siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House'}. All rights reserved. Made for Bangladesh.
+          </p>
 
           <button
             onClick={scrollToTop}

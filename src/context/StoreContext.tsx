@@ -15,7 +15,14 @@ import {
   DeliveryRecord,
   Complaint,
   ComplaintStatus,
+  BackupFileStructure,
 } from '../types';
+import {
+  generateFullDatabaseBackup,
+  downloadBackupFile,
+  formatAllBusinessData,
+  restoreBackupToFirestore,
+} from '../utils/backupRestore';
 import {
   initialCategories,
   initialProducts,
@@ -179,6 +186,14 @@ interface StoreContextType {
   toasts: ToastMessage[];
   showToast: (message: string, type?: 'success' | 'error' | 'info') => void;
   removeToast: (id: string) => void;
+
+  // Backup, Format & Restore
+  exportAllData: () => Promise<void>;
+  formatAllData: () => Promise<{ deletedCount: number }>;
+  restoreAllData: (
+    backup: BackupFileStructure,
+    onProgress?: (progress: { current: number; total: number; collection: string }) => void
+  ) => Promise<{ restoredCount: number }>;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -276,10 +291,39 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => unsubscribe();
   }, []);
 
+  // ----------------------------------------------------
+  // DYNAMIC BROWSER TITLE & FAVICON SYNC
+  // ----------------------------------------------------
+  useEffect(() => {
+    const titleToUse =
+      siteSettings.browserTabTitle ||
+      siteSettings.businessName ||
+      siteSettings.siteName ||
+      'Minarul Fashion House';
+    document.title = titleToUse;
+
+    const faviconToUse = siteSettings.faviconUrl;
+    if (faviconToUse) {
+      let link: HTMLLinkElement | null = document.querySelector("link[rel*='icon']");
+      if (!link) {
+        link = document.createElement('link');
+        link.rel = 'icon';
+        document.head.appendChild(link);
+      }
+      link.href = faviconToUse;
+    }
+  }, [
+    siteSettings.browserTabTitle,
+    siteSettings.businessName,
+    siteSettings.siteName,
+    siteSettings.faviconUrl,
+  ]);
+
   const updateSiteSettings = async (newSettings: Partial<SiteSettings>) => {
     try {
+      const cleanSettings = sanitizeForFirestore(newSettings);
       const settingsDocRef = doc(db, 'settings', 'global');
-      await setDoc(settingsDocRef, newSettings, { merge: true });
+      await setDoc(settingsDocRef, cleanSettings, { merge: true });
       showToast(
         lang === 'bn' ? 'সেটিংস ক্লাউড ডেটাবেজে সংরক্ষিত হয়েছে' : 'Settings updated in Firestore',
         'success'
@@ -299,10 +343,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       productsColRef,
       (snapshot) => {
         if (snapshot.empty) {
-          // If no products in Firestore yet, fall back to initial catalog in memory without writing to Firestore
-          setProducts(initialProducts);
+          // If the admin deliberately formatted the database, leave products empty
+          if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+            setProducts([]);
+          } else {
+            setProducts(initialProducts);
+          }
           setProductsLoading(false);
         } else {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('minarul_db_formatted');
+          }
           const loadedProducts: Product[] = [];
           snapshot.forEach((docSnap) => {
             loadedProducts.push({
@@ -316,7 +367,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       },
       (error) => {
         console.error('Products listener error:', error);
-        setProducts(initialProducts);
+        if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+          setProducts([]);
+        } else {
+          setProducts(initialProducts);
+        }
         setProductsLoading(false);
       }
     );
@@ -1424,21 +1479,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       adminNotes: orderPayload.adminNotes?.trim() || '',
       createdAt: serverTimestamp(),
       createdAtIso: new Date().toISOString(),
-      digitalDeliveries: orderPayload.items.map((item) => {
-        const matchedProduct = products.find((p) => p.id === item.productId);
-        const matchedVariant = matchedProduct?.variants.find((v) => v.id === item.variantId);
-        return {
-          productTitle: String(item.productTitle || ''),
-          variantTitle: String(item.variantName || ''),
-          deliveryType: String(item.deliveryType || 'shared_account'),
-          credentialsOrKey:
-            matchedVariant?.sampleKey ||
-            (lang === 'bn'
-              ? 'অ্যাডমিন পেমেন্ট ভেরিফাই করার পর আপনার লাইসেন্স কি এখানে প্রদর্শিত হবে।'
-              : 'Credentials will be generated once payment is confirmed by administration.'),
-          notes: lang === 'bn' ? 'সংরক্ষণ করুন এবং শেয়ার করবেন না।' : 'Please keep this confidential.',
-        };
-      }),
+      digitalDeliveries: [],
     };
 
     // Sanitize object to guarantee no undefined fields are passed to Firestore
@@ -2125,6 +2166,70 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     showToast(lang === 'bn' ? 'কুপন বাতিল করা হয়েছে' : 'Coupon removed', 'info');
   };
 
+  // ----------------------------------------------------
+  // BACKUP, FORMAT & RESTORE
+  // ----------------------------------------------------
+  const exportAllData = async () => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      showToast(lang === 'bn' ? 'শুধুমাত্র অ্যাডমিন ব্যাকআপ নিতে পারবেন' : 'Admin access required', 'error');
+      throw new Error('Unauthorized');
+    }
+    const { backup, totalCount } = await generateFullDatabaseBackup(
+      siteSettings.businessName || siteSettings.siteName
+    );
+    downloadBackupFile(backup);
+    showToast(
+      lang === 'bn'
+        ? `ব্যাকআপ ফাইল সফলভাবে ডাউনলোড হয়েছে (${totalCount} ডকুমেন্টস)`
+        : `Backup file generated and downloaded (${totalCount} documents)`,
+      'success'
+    );
+  };
+
+  const formatAllData = async (): Promise<{ deletedCount: number }> => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      showToast(lang === 'bn' ? 'শুধুমাত্র অ্যাডমিন ডেটা রিসেট করতে পারবেন' : 'Admin access required', 'error');
+      throw new Error('Unauthorized');
+    }
+    const adminUid = auth.currentUser?.uid || currentUser.id;
+    const res = await formatAllBusinessData(adminUid);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('minarul_db_formatted', 'true');
+    }
+    setProducts([]);
+    setOrders([]);
+    setDeliveries({});
+    setComplaints([]);
+    showToast(
+      lang === 'bn'
+        ? `সমস্ত ব্যবসায়িক ডেটা সফলভাবে ফরম্যাট করা হয়েছে (${res.deletedCount} ডকুমেন্টস মুছে ফেলা হয়েছে)`
+        : `All business data formatted successfully (${res.deletedCount} documents deleted)`,
+      'success'
+    );
+    return res;
+  };
+
+  const restoreAllData = async (
+    backup: BackupFileStructure,
+    onProgress?: (p: { current: number; total: number; collection: string }) => void
+  ): Promise<{ restoredCount: number }> => {
+    if (!currentUser || currentUser.role !== 'admin') {
+      showToast(lang === 'bn' ? 'শুধুমাত্র অ্যাডমিন ডেটা রিস্টোর করতে পারবেন' : 'Admin access required', 'error');
+      throw new Error('Unauthorized');
+    }
+    const res = await restoreBackupToFirestore(backup, onProgress);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('minarul_db_formatted');
+    }
+    showToast(
+      lang === 'bn'
+        ? `ডেটা সফলভাবে রিস্টোর হয়েছে (${res.restoredCount} ডকুমেন্টস)`
+        : `Data restored successfully (${res.restoredCount} documents)`,
+      'success'
+    );
+    return res;
+  };
+
   return (
     <StoreContext.Provider
       value={{
@@ -2216,6 +2321,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         toasts,
         showToast,
         removeToast,
+        exportAllData,
+        formatAllData,
+        restoreAllData,
       }}
     >
       {children}

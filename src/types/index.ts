@@ -202,10 +202,16 @@ export interface AdminUser {
 export interface SiteSettings {
   siteName: string;
   storeName: string;
+  businessName: string;
+  businessAddress: string;
+  businessLogo: string;
   siteLogo?: string;
+  faviconUrl: string;
+  browserTabTitle: string;
   contactEmail: string;
   supportEmail: string;
   contactPhone: string;
+  supportPhone?: string;
   whatsappSupportNumber: string;
   bkashNumber: string;
   bkashType: 'Merchant' | 'Personal';
@@ -215,9 +221,20 @@ export interface SiteSettings {
   rocketType: 'Personal';
   paymentInstructions?: string;
   siteMaintenanceMode?: boolean;
+  maintenanceMode?: boolean;
   deliveryMessage?: string;
+  deliveryNoticeBn?: string;
+  deliveryNoticeEn?: string;
   announcementEn: string;
   announcementBn: string;
+}
+
+export interface BackupFileStructure {
+  backupVersion: string;
+  createdAt: string;
+  projectName?: string;
+  totalDocuments?: number;
+  collections: Record<string, Record<string, any>>;
 }
 
 export interface ToastMessage {

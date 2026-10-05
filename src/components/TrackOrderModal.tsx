@@ -176,53 +176,58 @@ export const TrackOrderModal: React.FC = () => {
                     ))}
                   </div>
 
-                  {/* Digital keys if completed or available */}
-                  {matchedOrder.digitalDeliveries && matchedOrder.digitalDeliveries.length > 0 && (
-                    <div className="space-y-2 pt-2">
-                      <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5 uppercase tracking-wider">
-                        <Key className="w-4 h-4 text-emerald-600" />
-                        <span>{t.digitalCredentials}</span>
-                      </span>
+                  {/* Digital Delivery Link if order delivered */}
+                  {(matchedOrder.status === 'delivered' || matchedOrder.status === 'completed') &&
+                    matchedOrder.digitalDeliveries &&
+                    matchedOrder.digitalDeliveries.length > 0 && (
+                      <div className="space-y-2 pt-2">
+                        <span className="text-xs font-bold text-gray-800 flex items-center gap-1.5 uppercase tracking-wider">
+                          <ExternalLink className="w-4 h-4 text-emerald-600" />
+                          <span>{lang === 'bn' ? 'ডিজিটাল অ্যাক্সেস লিঙ্ক' : 'Digital Access Link'}</span>
+                        </span>
 
-                      {matchedOrder.digitalDeliveries.map((del, i) => {
-                        const link = del.externalAccessUrl || (del.downloadUrl?.startsWith('http') ? del.downloadUrl : null);
-                        return (
-                          <div key={i} className="bg-slate-900 text-white p-3.5 rounded-xl text-xs space-y-2">
-                            <div className="flex justify-between items-center text-emerald-400 font-bold">
-                              <span>{del.productTitle}</span>
-                              {del.credentialsOrKey && (
-                                <button
-                                  onClick={() => handleCopy(del.credentialsOrKey)}
-                                  className="px-2 py-0.5 rounded bg-emerald-600 text-white text-[10px] flex items-center gap-1 cursor-pointer"
-                                >
-                                  {copiedKey === del.credentialsOrKey ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                                  <span>{copiedKey === del.credentialsOrKey ? t.copied : t.copyKey}</span>
-                                </button>
+                        {matchedOrder.digitalDeliveries.map((del, i) => {
+                          const link =
+                            del.externalAccessUrl ||
+                            (del as any).externalAccessLink ||
+                            del.downloadUrl ||
+                            del.downloadLink;
+                          return (
+                            <div key={i} className="bg-slate-900 text-white p-3.5 rounded-xl text-xs space-y-2">
+                              <div className="flex justify-between items-center text-emerald-400 font-bold">
+                                <span>{del.productTitle}</span>
+                                <span className="text-[10px] text-emerald-300 font-semibold px-2 py-0.5 rounded bg-emerald-950/70 border border-emerald-800">
+                                  {lang === 'bn' ? 'ডেলিভার্ড' : 'Delivered'}
+                                </span>
+                              </div>
+                              {link ? (
+                                <div className="pt-1">
+                                  <a
+                                    href={link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                                  >
+                                    <ExternalLink className="w-3.5 h-3.5" />
+                                    <span>
+                                      {lang === 'bn'
+                                        ? 'গুগল ড্রাইভ / অ্যাক্সেস লিঙ্ক খুলুন'
+                                        : 'Open Drive / Access Link'}
+                                    </span>
+                                  </a>
+                                </div>
+                              ) : (
+                                <p className="text-[11px] text-gray-400">
+                                  {lang === 'bn'
+                                    ? 'অ্যাক্সেস লিঙ্ক প্রস্তুত হচ্ছে।'
+                                    : 'Access link is being prepared.'}
+                                </p>
                               )}
                             </div>
-                            {del.credentialsOrKey && (
-                              <div className="bg-slate-950 p-2.5 rounded font-mono text-amber-300 break-all select-all text-[11px]">
-                                {del.credentialsOrKey}
-                              </div>
-                            )}
-                            {link && (
-                              <div className="pt-1">
-                                <a
-                                  href={link}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors"
-                                >
-                                  <ExternalLink className="w-3.5 h-3.5" />
-                                  <span>{lang === 'bn' ? 'অ্যাক্সেস / ড্রাইভ লিঙ্ক খুলুন' : 'Open Access / Drive Link'}</span>
-                                </a>
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                          );
+                        })}
+                      </div>
+                    )}
 
                   {/* Payment Details */}
                   <div className="p-3 bg-gray-50 rounded-xl text-[11px] text-gray-600 flex justify-between">

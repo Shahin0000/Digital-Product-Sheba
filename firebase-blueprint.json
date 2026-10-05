@@ -107,6 +107,30 @@
         "deliveryMessage": { "type": "string", "description": "Standard delivery message note" }
       },
       "required": ["siteName", "bkashNumber", "nagadNumber"]
+    },
+    "StockMovement": {
+      "title": "StockMovement",
+      "description": "Stock audit trail and inventory adjustment movements",
+      "type": "object",
+      "properties": {
+        "movementId": { "type": "string", "description": "Unique identifier for movement" },
+        "productId": { "type": "string", "description": "Target product ID" },
+        "productName": { "type": "string", "description": "Product display title" },
+        "variantId": { "type": "string", "description": "Target variant ID if applicable" },
+        "variantName": { "type": "string", "description": "Variant display name" },
+        "movementType": { "type": "string", "enum": ["adjustment_in", "adjustment_out", "purchase", "sale", "return"], "description": "Adjustment or movement category" },
+        "quantity": { "type": "number", "description": "Quantity adjusted" },
+        "previousStock": { "type": "number", "description": "Stock balance prior to adjustment" },
+        "newStock": { "type": "number", "description": "Stock balance after adjustment" },
+        "unitCost": { "type": "number", "description": "Unit cost or unit price" },
+        "referenceType": { "type": "string", "description": "Reference source (e.g. stock_adjustment)" },
+        "referenceId": { "type": "string", "description": "Reference document identifier" },
+        "reason": { "type": "string", "description": "Reason for adjustment" },
+        "note": { "type": "string", "description": "Additional administrative remarks" },
+        "createdBy": { "type": "string", "description": "Admin UID or email who authorized adjustment" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      },
+      "required": ["movementId", "productId", "movementType", "quantity", "previousStock", "newStock", "reason"]
     }
   },
   "firestore": {
@@ -121,6 +145,10 @@
     "/products/{productId}": {
       "schema": "Product",
       "description": "Catalog of digital products and software subscriptions"
+    },
+    "/stockMovements/{movementId}": {
+      "schema": "StockMovement",
+      "description": "Inventory stock adjustments and warehouse movements log"
     },
     "/orders/{orderId}": {
       "schema": "Order",

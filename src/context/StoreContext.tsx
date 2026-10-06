@@ -310,7 +310,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         link.rel = 'icon';
         document.head.appendChild(link);
       }
-      link.href = faviconToUse;
+      const cacheBusted =
+        faviconToUse.startsWith('data:') || faviconToUse.includes('?v=')
+          ? faviconToUse
+          : `${faviconToUse}${faviconToUse.includes('?') ? '&' : '?'}v=${Date.now()}`;
+      link.href = cacheBusted;
     }
   }, [
     siteSettings.browserTabTitle,

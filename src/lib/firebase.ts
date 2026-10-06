@@ -12,10 +12,13 @@ export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getA
 export const db = getFirestore(app);
 
 // Initialize Firebase Storage
-export const storage = getStorage(
-  app,
-  firebaseConfig.storageBucket ? `gs://${firebaseConfig.storageBucket}` : undefined
-);
+export const storage = getStorage(app);
+try {
+  storage.maxUploadRetryTime = 15000;
+  storage.maxOperationRetryTime = 15000;
+} catch {
+  // fallback if not supported in this runtime
+}
 
 // Auth instance and providers
 export const auth = getAuth(app);

@@ -170,7 +170,9 @@ export const AdminDashboardModal: React.FC = () => {
   const [logoPreview, setLogoPreview] = useState<string>(siteSettings.businessLogo || siteSettings.siteLogo || '');
   const [faviconPreview, setFaviconPreview] = useState<string>(siteSettings.faviconUrl || '');
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [logoUploadProgress, setLogoUploadProgress] = useState(0);
   const [isUploadingFavicon, setIsUploadingFavicon] = useState(false);
+  const [faviconUploadProgress, setFaviconUploadProgress] = useState(0);
   const [isSavingBusiness, setIsSavingBusiness] = useState(false);
 
   // Backup, Format & Restore State
@@ -194,6 +196,7 @@ export const AdminDashboardModal: React.FC = () => {
     collection: string;
   } | null>(null);
   const [isRestoreConfirmOpen, setIsRestoreConfirmOpen] = useState(false);
+  const [restoreErrorMessage, setRestoreErrorMessage] = useState<string | null>(null);
 
   // Sync business settings with Firestore
   useEffect(() => {
@@ -413,65 +416,137 @@ export const AdminDashboardModal: React.FC = () => {
   const handleLogoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setIsUploadingLogo(true);
-    try {
-      const url = await uploadBrandingImage(file, 'logo');
-      setLogoPreview(url);
-      setBusinessSettingsForm((prev) => ({ ...prev, businessLogo: url }));
+
+    const inputEl = e.target;
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/x-icon', 'image/svg+xml'];
+    if (!allowedTypes.includes(file.type.toLowerCase()) && !file.name.match(/\.(png|jpe?g|webp|ico|svg)$/i)) {
       showToast(
         lang === 'bn'
-          ? 'লোগো সফলভাবে লোড হয়েছে। স্থায়ীভাবে সংরক্ষণ করতে "Save Changes" চাপুন।'
-          : 'Logo uploaded. Click "Save Changes" to save permanently.',
+          ? 'অনুপযুক্ত ফাইল ফরম্যাট। শুধুমাত্র PNG, JPG, JPEG বা WEBP আপলোড করুন।'
+          : 'Unsupported format. Please select PNG, JPG, JPEG, or WEBP.',
+        'error'
+      );
+      inputEl.value = '';
+      return;
+    }
+
+    // Validate size (5MB limit)
+    if (file.size > 5 * 1024 * 1024) {
+      showToast(
+        lang === 'bn' ? 'ফাইলের আকার ৫MB-এর বেশি হতে পারবে না।' : 'File size cannot exceed 5MB limit.',
+        'error'
+      );
+      inputEl.value = '';
+      return;
+    }
+
+    setIsUploadingLogo(true);
+    setLogoUploadProgress(10);
+    try {
+      const url = await uploadBrandingImage(file, 'logo', (p) => setLogoUploadProgress(p));
+      setLogoPreview(url);
+      setBusinessSettingsForm((prev) => ({ ...prev, businessLogo: url }));
+      
+      // Save directly to Firestore settings document
+      await updateSiteSettings({ businessLogo: url, siteLogo: url });
+
+      showToast(
+        lang === 'bn'
+          ? 'লোগো সফলভাবে আপলোড ও স্থায়ীভাবে সংরক্ষিত হয়েছে!'
+          : 'Business logo uploaded and saved successfully!',
         'success'
       );
     } catch (err: any) {
+      console.error('Logo upload error:', err);
       showToast(err.message || 'Logo upload error', 'error');
     } finally {
       setIsUploadingLogo(false);
+      setLogoUploadProgress(0);
+      inputEl.value = '';
     }
   };
 
-  const handleRemoveLogo = () => {
+  const handleRemoveLogo = async () => {
     setLogoPreview('');
     setBusinessSettingsForm((prev) => ({ ...prev, businessLogo: '' }));
-    showToast(
-      lang === 'bn'
-        ? 'লোগো সরানো হয়েছে। স্থায়ীভাবে কার্যকর করতে "Save Changes" চাপুন।'
-        : 'Logo removed. Click "Save Changes" to apply.',
-      'info'
-    );
+    try {
+      await updateSiteSettings({ businessLogo: '', siteLogo: '' });
+      showToast(
+        lang === 'bn' ? 'লোগো সরানো হয়েছে।' : 'Logo removed successfully.',
+        'info'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Failed to remove logo', 'error');
+    }
   };
 
   const handleFaviconFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setIsUploadingFavicon(true);
-    try {
-      const url = await uploadBrandingImage(file, 'favicon');
-      setFaviconPreview(url);
-      setBusinessSettingsForm((prev) => ({ ...prev, faviconUrl: url }));
+
+    const inputEl = e.target;
+    // Validate file type
+    const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/svg+xml'];
+    if (!allowedTypes.includes(file.type.toLowerCase()) && !file.name.match(/\.(png|jpe?g|webp|ico|svg)$/i)) {
       showToast(
         lang === 'bn'
-          ? 'ফ্যাভিকন সফলভাবে লোড হয়েছে। স্থায়ীভাবে সংরক্ষণ করতে "Save Changes" চাপুন।'
-          : 'Favicon uploaded. Click "Save Changes" to save permanently.',
+          ? 'অনুপযুক্ত ফাইল ফরম্যাট। শুধুমাত্র PNG, ICO বা WEBP আপলোড করুন।'
+          : 'Unsupported format. Please select PNG, ICO, or WEBP.',
+        'error'
+      );
+      inputEl.value = '';
+      return;
+    }
+
+    // Validate size (5MB limit)
+    if (file.size > 5 * 1024 * 1024) {
+      showToast(
+        lang === 'bn' ? 'ফাইলের আকার ৫MB-এর বেশি হতে পারবে না।' : 'File size cannot exceed 5MB limit.',
+        'error'
+      );
+      inputEl.value = '';
+      return;
+    }
+
+    setIsUploadingFavicon(true);
+    setFaviconUploadProgress(10);
+    try {
+      const url = await uploadBrandingImage(file, 'favicon', (p) => setFaviconUploadProgress(p));
+      setFaviconPreview(url);
+      setBusinessSettingsForm((prev) => ({ ...prev, faviconUrl: url }));
+      
+      // Save directly to Firestore settings document
+      await updateSiteSettings({ faviconUrl: url });
+
+      showToast(
+        lang === 'bn'
+          ? 'ফ্যাভিকন সফলভাবে আপলোড ও ক্লাউডে সংরক্ষিত হয়েছে!'
+          : 'Favicon uploaded and saved successfully!',
         'success'
       );
     } catch (err: any) {
+      console.error('Favicon upload error:', err);
       showToast(err.message || 'Favicon upload error', 'error');
     } finally {
       setIsUploadingFavicon(false);
+      setFaviconUploadProgress(0);
+      inputEl.value = '';
     }
   };
 
-  const handleRemoveFavicon = () => {
+  const handleRemoveFavicon = async () => {
     setFaviconPreview('');
     setBusinessSettingsForm((prev) => ({ ...prev, faviconUrl: '' }));
-    showToast(
-      lang === 'bn'
-        ? 'ফ্যাভিকন সরানো হয়েছে। স্থায়ীভাবে কার্যকর করতে "Save Changes" চাপুন।'
-        : 'Favicon removed. Click "Save Changes" to apply.',
-      'info'
-    );
+    try {
+      await updateSiteSettings({ faviconUrl: '' });
+      showToast(
+        lang === 'bn' ? 'ফ্যাভিকন সরানো হয়েছে।' : 'Favicon removed successfully.',
+        'info'
+      );
+    } catch (err: any) {
+      showToast(err.message || 'Failed to remove favicon', 'error');
+    }
   };
 
   // --- BACKUP & RESTORE HANDLERS ---
@@ -537,13 +612,20 @@ export const AdminDashboardModal: React.FC = () => {
       return;
     }
     setIsRestoring(true);
+    setRestoreErrorMessage(null);
     try {
       await restoreAllData(restoreJson, (progress) => {
         setRestoreProgress(progress);
       });
       setIsRestoreConfirmOpen(false);
+      showToast(
+        lang === 'bn' ? 'ডেটাবেজ সফলভাবে রিস্টোর হয়েছে!' : 'Database restored successfully!',
+        'success'
+      );
     } catch (err: any) {
-      showToast(`Restore error: ${err.message}`, 'error');
+      console.error('[RESTORE FAILED]:', err);
+      setRestoreErrorMessage(err.message || 'Restore failed with unknown error.');
+      showToast(lang === 'bn' ? 'রিস্টোর ব্যর্থ হয়েছে।' : 'Restore operation failed', 'error');
     } finally {
       setIsRestoring(false);
     }
@@ -2338,9 +2420,15 @@ export const AdminDashboardModal: React.FC = () => {
                             </div>
                           )}
                           {isUploadingLogo && (
-                            <div className="absolute inset-0 bg-black/70 flex items-center justify-center text-emerald-400 text-xs font-bold gap-2">
-                              <RefreshCw className="w-4 h-4 animate-spin" />
-                              <span>Uploading...</span>
+                            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center text-emerald-400 text-xs font-bold gap-2 p-3">
+                              <RefreshCw className="w-5 h-5 animate-spin text-emerald-400" />
+                              <span>Uploading... {logoUploadProgress > 0 ? `${logoUploadProgress}%` : ''}</span>
+                              <div className="w-28 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                                  style={{ width: `${Math.max(10, logoUploadProgress)}%` }}
+                                />
+                              </div>
                             </div>
                           )}
                         </div>
@@ -2404,9 +2492,15 @@ export const AdminDashboardModal: React.FC = () => {
                             </div>
                           )}
                           {isUploadingFavicon && (
-                            <div className="absolute inset-0 bg-black/70 flex items-center justify-center text-emerald-400 text-xs font-bold gap-2">
-                              <RefreshCw className="w-4 h-4 animate-spin" />
-                              <span>Uploading...</span>
+                            <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center text-emerald-400 text-xs font-bold gap-2 p-3">
+                              <RefreshCw className="w-5 h-5 animate-spin text-emerald-400" />
+                              <span>Uploading... {faviconUploadProgress > 0 ? `${faviconUploadProgress}%` : ''}</span>
+                              <div className="w-28 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                                  style={{ width: `${Math.max(10, faviconUploadProgress)}%` }}
+                                />
+                              </div>
                             </div>
                           )}
                         </div>
@@ -3267,14 +3361,49 @@ export const AdminDashboardModal: React.FC = () => {
             </div>
 
             <div className="space-y-3 text-xs text-slate-300">
-              <p>
-                You are about to restore{' '}
-                <strong className="text-emerald-400 font-bold">
-                  {restoreValidation?.summary?.totalDocuments || 0} documents
-                </strong>{' '}
-                from backup file{' '}
-                <strong className="text-white">{restoreFile?.name}</strong>.
-              </p>
+              <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2">
+                <div className="grid grid-cols-2 gap-2 text-slate-300 font-mono text-[11px]">
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-sans">Backup Date:</span>
+                    <strong className="text-white">
+                      {restoreValidation?.summary?.createdAt
+                        ? new Date(restoreValidation.summary.createdAt).toLocaleString()
+                        : 'Unknown'}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-sans">Backup Version:</span>
+                    <strong className="text-white">{restoreValidation?.summary?.backupVersion || '1.0'}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-sans">Total Collections:</span>
+                    <strong className="text-cyan-400">
+                      {restoreValidation?.summary?.collectionCounts
+                        ? Object.keys(restoreValidation.summary.collectionCounts).length
+                        : 0}
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 block text-[10px] uppercase font-sans">Total Documents:</span>
+                    <strong className="text-emerald-400 font-bold">
+                      {restoreValidation?.summary?.totalDocuments || 0}
+                    </strong>
+                  </div>
+                </div>
+
+                {restoreValidation?.summary?.collectionCounts && (
+                  <div className="pt-2 border-t border-slate-800">
+                    <span className="text-[10px] text-slate-400 block mb-1">Collections & Document Counts:</span>
+                    <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto font-mono text-[10px]">
+                      {Object.entries(restoreValidation.summary.collectionCounts).map(([col, cnt]) => (
+                        <span key={col} className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300">
+                          {col}: <strong className="text-emerald-400">{cnt as number}</strong>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-amber-200 text-xs space-y-1">
                 <span className="font-bold flex items-center gap-1 text-amber-400">
@@ -3286,6 +3415,23 @@ export const AdminDashboardModal: React.FC = () => {
                   Existing documents with identical IDs will be overwritten or updated.
                 </p>
               </div>
+
+              <div className="bg-slate-800/40 p-3 rounded-xl border border-slate-700/60 text-slate-200 font-medium">
+                Are you sure you want to restore this backup?
+              </div>
+
+              {/* Error Box if Restore Failed */}
+              {restoreErrorMessage && (
+                <div className="bg-red-950/40 border border-red-500/60 rounded-xl p-3.5 text-red-200 space-y-2">
+                  <div className="flex items-center gap-1.5 font-bold text-red-400">
+                    <AlertOctagon className="w-4 h-4 shrink-0" />
+                    <span>Restore Failed</span>
+                  </div>
+                  <pre className="text-[11px] font-mono whitespace-pre-wrap text-red-300 bg-red-950/60 p-2.5 rounded-lg border border-red-800/40 overflow-x-auto leading-relaxed select-all">
+                    {restoreErrorMessage}
+                  </pre>
+                </div>
+              )}
 
               {/* Progress Bar during Restore */}
               {isRestoring && (
@@ -3320,7 +3466,10 @@ export const AdminDashboardModal: React.FC = () => {
               <button
                 type="button"
                 disabled={isRestoring}
-                onClick={() => setIsRestoreConfirmOpen(false)}
+                onClick={() => {
+                  setIsRestoreConfirmOpen(false);
+                  setRestoreErrorMessage(null);
+                }}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
               >
                 Cancel
@@ -3335,12 +3484,12 @@ export const AdminDashboardModal: React.FC = () => {
                 {isRestoring ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    <span>Restoring to Firestore...</span>
+                    <span>Restoring Data...</span>
                   </>
                 ) : (
                   <>
                     <Check className="w-4 h-4" />
-                    <span>Confirm & Execute Restore</span>
+                    <span>Restore Data</span>
                   </>
                 )}
               </button>

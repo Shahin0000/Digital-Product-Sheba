@@ -1,0 +1,41 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isAdmin() {
+      return isSignedIn() &&
+        firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+        firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isImage() {
+      return request.resource.contentType.matches('image/(png|jpeg|jpg|webp|x-icon|vnd.microsoft.icon|svg\\+xml)');
+    }
+
+    function isUnderMaxSize() {
+      return request.resource.size < 5 * 1024 * 1024; // 5 MB max
+    }
+
+    // Business branding images: logo and favicon
+    // Public read for website visitors, Admin-only write with image type and size validation
+    match /business/branding/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin() && isImage() && isUnderMaxSize();
+    }
+
+    match /branding/{fileName} {
+      allow read: if true;
+      allow write: if isAdmin() && isImage() && isUnderMaxSize();
+    }
+
+    // General admin files
+    match /{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin() && isUnderMaxSize();
+    }
+  }
+}

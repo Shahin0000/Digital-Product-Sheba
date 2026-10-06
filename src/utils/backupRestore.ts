@@ -7,7 +7,7 @@ import {
   deleteDoc,
   setDoc,
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { BackupFileStructure } from '../types';
 
 export const BACKUP_COLLECTIONS = [
@@ -210,17 +210,21 @@ export async function formatAllBusinessData(
       const snapshot = await getDocs(colRef);
 
       const docsToDelete = snapshot.docs;
-      const CHUNK_SIZE = 200;
+      const CHUNK_SIZE = 5;
 
       for (let i = 0; i < docsToDelete.length; i += CHUNK_SIZE) {
         const chunk = docsToDelete.slice(i, i + CHUNK_SIZE);
-        const batch = writeBatch(db);
-        chunk.forEach((d) => {
-          batch.delete(d.ref);
-          deletedCount++;
-          deletedByCollection[colName]++;
-        });
-        await batch.commit();
+        await Promise.all(
+          chunk.map(async (d) => {
+            try {
+              await deleteDoc(d.ref);
+              deletedCount++;
+              deletedByCollection[colName]++;
+            } catch (delErr) {
+              console.warn(`Failed to delete document ${d.id} in ${colName}:`, delErr);
+            }
+          })
+        );
       }
     } catch (err) {
       console.warn(`Error formatting collection ${colName}:`, err);
@@ -242,16 +246,20 @@ export async function formatAllBusinessData(
       return true;
     });
 
-    const CHUNK_SIZE = 200;
+    const CHUNK_SIZE = 5;
     for (let i = 0; i < customersToDelete.length; i += CHUNK_SIZE) {
       const chunk = customersToDelete.slice(i, i + CHUNK_SIZE);
-      const batch = writeBatch(db);
-      chunk.forEach((d) => {
-        batch.delete(d.ref);
-        deletedCount++;
-        deletedByCollection['users']++;
-      });
-      await batch.commit();
+      await Promise.all(
+        chunk.map(async (d) => {
+          try {
+            await deleteDoc(d.ref);
+            deletedCount++;
+            deletedByCollection['users']++;
+          } catch (delErr) {
+            console.warn(`Failed to delete user document ${d.id}:`, delErr);
+          }
+        })
+      );
     }
   } catch (err) {
     console.warn('Error formatting non-admin users:', err);
@@ -313,14 +321,16 @@ export function validateBackupFile(content: any): {
 
 /**
  * Restores data from the backup file into Firestore.
- * Uses UPSERT (setDoc with merge) to preserve original collection and document IDs.
+ * Uses safe small concurrency (setDoc with merge) to strictly adhere to Firestore rule
+ * limits, preserving original collection and document IDs.
+ * Provides exact collection, document ID, and error diagnostics if any write fails.
  */
 export async function restoreBackupToFirestore(
   backup: BackupFileStructure,
   onProgress?: (progress: { current: number; total: number; collection: string }) => void
 ): Promise<{ restoredCount: number; restoredByCollection: Record<string, number> }> {
-  if (!backup || !backup.collections) {
-    throw new Error('Invalid backup structure.');
+  if (!backup || !backup.collections || typeof backup.collections !== 'object') {
+    throw new Error('Invalid backup structure: missing collections map.');
   }
 
   let totalDocsToRestore = 0;
@@ -330,6 +340,13 @@ export async function restoreBackupToFirestore(
     }
   }
 
+  console.info('[RESTORE START]', {
+    totalCollections: Object.keys(backup.collections).length,
+    totalDocuments: totalDocsToRestore,
+    adminUid: auth.currentUser?.uid,
+    adminEmail: auth.currentUser?.email,
+  });
+
   let restoredCount = 0;
   const restoredByCollection: Record<string, number> = {};
 
@@ -338,33 +355,52 @@ export async function restoreBackupToFirestore(
     if (!docsMap || typeof docsMap !== 'object') continue;
 
     const entries = Object.entries(docsMap);
-    const CHUNK_SIZE = 100;
+    // Safe chunk size of 4 to stay well within Firestore's 10-call security rule evaluation limit
+    const CONCURRENCY_LIMIT = 4;
 
-    for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
-      const chunk = entries.slice(i, i + CHUNK_SIZE);
-      const batch = writeBatch(db);
+    for (let i = 0; i < entries.length; i += CONCURRENCY_LIMIT) {
+      const chunk = entries.slice(i, i + CONCURRENCY_LIMIT);
 
-      for (const [docId, rawData] of chunk) {
-        if (!docId || !rawData) continue;
-        const deserializedData = deserializeFirestoreData(rawData);
-        const docRef = doc(db, colName, docId);
-        batch.set(docRef, deserializedData, { merge: true });
-      }
+      await Promise.all(
+        chunk.map(async ([docId, rawData]) => {
+          if (!docId || rawData === undefined) return;
+          try {
+            const deserializedData = deserializeFirestoreData(rawData);
+            const docRef = doc(db, colName, docId);
+            await setDoc(docRef, deserializedData, { merge: true });
 
-      await batch.commit();
+            restoredCount++;
+            restoredByCollection[colName]++;
 
-      restoredCount += chunk.length;
-      restoredByCollection[colName] += chunk.length;
+            if (onProgress) {
+              onProgress({
+                current: restoredCount,
+                total: totalDocsToRestore,
+                collection: colName,
+              });
+            }
+          } catch (err: any) {
+            console.error('[RESTORE FAILURE DIAGNOSTIC]', {
+              collection: colName,
+              document: docId,
+              errorCode: err?.code,
+              errorMessage: err?.message,
+              adminUid: auth.currentUser?.uid,
+              adminEmail: auth.currentUser?.email,
+            });
 
-      if (onProgress) {
-        onProgress({
-          current: restoredCount,
-          total: totalDocsToRestore,
-          collection: colName,
-        });
-      }
+            const formattedError = `Restore failed\n\nCollection:\n${colName}\n\nDocument:\n${docId}\n\nError:\n${err?.message || err}`;
+            throw new Error(formattedError);
+          }
+        })
+      );
     }
   }
+
+  console.info('[RESTORE COMPLETE]', {
+    restoredCount,
+    restoredByCollection,
+  });
 
   return { restoredCount, restoredByCollection };
 }

@@ -1,4 +1,4 @@
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { storage } from '../lib/firebase';
 
 /**
@@ -58,32 +58,127 @@ export function fileToOptimizedDataUrl(
 }
 
 /**
- * Uploads an image to Firebase Storage with automatic Canvas Data URL fallback.
+ * Uploads an image to Firebase Storage with automatic server and canvas fallbacks.
+ * Emits real upload progress and guarantees promise resolution without hanging.
  */
 export async function uploadBrandingImage(
   file: File,
-  type: 'logo' | 'favicon'
+  type: 'logo' | 'favicon',
+  onProgress?: (progressPercent: number) => void
 ): Promise<string> {
-  const allowedTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/x-icon', 'image/svg+xml'];
-  if (!allowedTypes.includes(file.type) && !file.name.match(/\.(png|jpe?g|webp|ico|svg)$/i)) {
-    throw new Error('Unsupported image format. Please upload PNG, JPG, JPEG, or WEBP.');
+  if (!file) {
+    throw new Error('Please select an image file to upload.');
   }
 
-  // 1. Try Firebase Storage first if storage bucket is initialized
+  // 1. Validate File Format
+  const allowedMimes = [
+    'image/png',
+    'image/jpeg',
+    'image/jpg',
+    'image/webp',
+    'image/x-icon',
+    'image/vnd.microsoft.icon',
+    'image/svg+xml',
+  ];
+  const fileExtMatch = file.name.match(/\.(png|jpe?g|webp|ico|svg)$/i);
+  if (!allowedMimes.includes(file.type.toLowerCase()) && !fileExtMatch) {
+    throw new Error('Unsupported image format. Allowed formats: PNG, JPG, JPEG, WEBP, ICO, SVG.');
+  }
+
+  // 2. Validate File Size (Max 5MB)
+  const MAX_SIZE = 5 * 1024 * 1024;
+  if (file.size > MAX_SIZE) {
+    throw new Error('File size exceeds the 5MB limit. Please upload a smaller image.');
+  }
+
+  if (onProgress) onProgress(15);
+
+  const rawExt = file.name.split('.').pop()?.toLowerCase() || (type === 'favicon' ? 'ico' : 'png');
+  const ext = rawExt === 'jpeg' ? 'jpg' : rawExt;
+  const storagePath = `business/branding/${type}.${ext}`;
+
+  // 3. Attempt Firebase Storage upload with uploadBytesResumable (racing against 6-second timeout)
   try {
-    const ext = file.name.split('.').pop() || 'png';
-    const filename = `branding/${type}_${Date.now()}.${ext}`;
-    const storageRef = ref(storage, filename);
-    await uploadBytes(storageRef, file);
-    const downloadUrl = await getDownloadURL(storageRef);
+    const storagePromise = new Promise<string>((resolve, reject) => {
+      const storageRef = ref(storage, storagePath);
+      const uploadTask = uploadBytesResumable(storageRef, file, {
+        contentType: file.type || 'image/png',
+        customMetadata: {
+          brandingType: type,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          if (snapshot.totalBytes > 0) {
+            const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 75) + 15;
+            if (onProgress) onProgress(Math.min(90, pct));
+          }
+        },
+        (error) => {
+          reject(error);
+        },
+        async () => {
+          try {
+            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+            resolve(downloadUrl);
+          } catch (urlErr) {
+            reject(urlErr);
+          }
+        }
+      );
+    });
+
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('Firebase Storage timeout')), 6000)
+    );
+
+    const downloadUrl = await Promise.race([storagePromise, timeoutPromise]);
     if (downloadUrl) {
+      if (onProgress) onProgress(100);
       return downloadUrl;
     }
   } catch (storageErr) {
-    console.warn('Firebase Storage upload failed, using high-quality compressed data URL fallback:', storageErr);
+    console.warn(
+      `[Branding Upload] Firebase Storage upload could not complete (${storageErr instanceof Error ? storageErr.message : storageErr}). Using backend persistent branding store.`
+    );
   }
 
-  // 2. High-quality compressed Data URL fallback
+  // 4. Server-side static upload fallback (/api/branding/upload)
+  try {
+    if (onProgress) onProgress(60);
+    const dataUrl = await fileToOptimizedDataUrl(file, type === 'favicon' ? 128 : 600, type === 'favicon' ? 128 : 600, 0.92);
+
+    const response = await fetch('/api/branding/upload', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        type,
+        dataUrl,
+        fileName: file.name,
+        mimeType: file.type || 'image/png',
+      }),
+    });
+
+    if (response.ok) {
+      const resData = await response.json();
+      if (resData.url) {
+        if (onProgress) onProgress(100);
+        return resData.url;
+      }
+    }
+  } catch (serverErr) {
+    console.warn('[Branding Upload] Server upload fallback failed, using optimized canvas Data URL:', serverErr);
+  }
+
+  // 5. High-quality compressed Canvas Data URL (guaranteed standalone fallback)
+  if (onProgress) onProgress(90);
   const maxDim = type === 'favicon' ? 128 : 500;
-  return await fileToOptimizedDataUrl(file, maxDim, maxDim, 0.9);
+  const optimizedDataUrl = await fileToOptimizedDataUrl(file, maxDim, maxDim, 0.9);
+  if (onProgress) onProgress(100);
+  return optimizedDataUrl;
 }

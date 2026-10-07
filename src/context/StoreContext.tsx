@@ -2215,6 +2215,37 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(lang === 'bn' ? 'শুধুমাত্র অ্যাডমিন ব্যাকআপ নিতে পারবেন' : 'Admin access required', 'error');
       throw new Error('Unauthorized');
     }
+
+    try {
+      // 1. Primary Architecture: Secure server-side Admin endpoint with verified ID Token
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+      if (idToken) {
+        const res = await fetch('/api/admin/backup', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+        });
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.success && resData.backup) {
+            downloadBackupFile(resData.backup);
+            showToast(
+              lang === 'bn'
+                ? `ব্যাকআপ ফাইল সফলভাবে ডাউনলোড হয়েছে (${resData.backup.totalDocuments} ডকুমেন্টস)`
+                : `Backup file generated and downloaded (${resData.backup.totalDocuments} documents)`,
+              'success'
+            );
+            return;
+          }
+        }
+      }
+    } catch (serverErr) {
+      console.warn('[Admin Backup API] Server endpoint fallback to direct SDK:', serverErr);
+    }
+
+    // 2. Client-side SDK fallback
     const { backup, totalCount } = await generateFullDatabaseBackup(
       siteSettings.businessName || siteSettings.siteName
     );
@@ -2232,6 +2263,44 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(lang === 'bn' ? 'শুধুমাত্র অ্যাডমিন ডেটা রিসেট করতে পারবেন' : 'Admin access required', 'error');
       throw new Error('Unauthorized');
     }
+
+    try {
+      // 1. Primary Architecture: Secure server-side endpoint with verified ID Token
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+      if (idToken) {
+        const res = await fetch('/api/admin/format', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ confirmText: 'DELETE' }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success) {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem('minarul_db_formatted', 'true');
+            }
+            setProducts([]);
+            setOrders([]);
+            setDeliveries({});
+            setComplaints([]);
+            showToast(
+              lang === 'bn'
+                ? `সমস্ত ব্যবসায়িক ডেটা সফলভাবে ফরম্যাট করা হয়েছে (${data.deletedCount} ডকুমেন্টস মুছে ফেলা হয়েছে)`
+                : `All business data formatted successfully (${data.deletedCount} documents deleted)`,
+              'success'
+            );
+            return { deletedCount: data.deletedCount };
+          }
+        }
+      }
+    } catch (serverErr) {
+      console.warn('[Admin Format API] Server endpoint fallback to direct SDK:', serverErr);
+    }
+
+    // 2. Client-side SDK fallback
     const adminUid = auth.currentUser?.uid || currentUser.id;
     const res = await formatAllBusinessData(adminUid);
     if (typeof window !== 'undefined') {
@@ -2258,6 +2327,46 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(lang === 'bn' ? 'শুধুমাত্র অ্যাডমিন ডেটা রিস্টোর করতে পারবেন' : 'Admin access required', 'error');
       throw new Error('Unauthorized');
     }
+
+    try {
+      // 1. Primary Architecture: Secure server-side endpoint with verified ID Token
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+      if (idToken) {
+        if (onProgress) {
+          onProgress({ current: 1, total: backup.totalDocuments || 10, collection: 'server-processing' });
+        }
+        const res = await fetch('/api/admin/restore', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ backup }),
+        });
+        if (res.ok) {
+          const resData = await res.json();
+          if (resData.success) {
+            if (typeof window !== 'undefined') {
+              localStorage.removeItem('minarul_db_formatted');
+            }
+            if (onProgress) {
+              onProgress({ current: resData.restoredCount, total: resData.restoredCount, collection: 'complete' });
+            }
+            showToast(
+              lang === 'bn'
+                ? `ডেটা সফলভাবে রিস্টোর হয়েছে (${resData.restoredCount} ডকুমেন্টস)`
+                : `Data restored successfully (${resData.restoredCount} documents)`,
+              'success'
+            );
+            return { restoredCount: resData.restoredCount };
+          }
+        }
+      }
+    } catch (serverErr) {
+      console.warn('[Admin Restore API] Server endpoint fallback to direct SDK:', serverErr);
+    }
+
+    // 2. Client-side SDK fallback
     const res = await restoreBackupToFirestore(backup, onProgress);
     if (typeof window !== 'undefined') {
       localStorage.removeItem('minarul_db_formatted');

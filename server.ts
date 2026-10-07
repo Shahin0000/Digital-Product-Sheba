@@ -80,29 +80,14 @@ async function authenticateAdminToken(req: Request): Promise<{ uid: string; emai
     const uid = user.localId;
     const email = (user.email || '').toLowerCase();
 
-    // 1. Primary superadmin email verification
-    if (email === 'shahinpc2018@gmail.com') {
-      return { uid, email };
-    }
-
-    // 2. Check users/{uid} role in Firestore
+    // The ONLY source of admin authority is users/{uid}.role == "admin" in Firestore
     try {
       const userSnap = await getDoc(doc(serverDb, 'users', uid));
       if (userSnap.exists() && userSnap.data()?.role === 'admin') {
         return { uid, email };
       }
-    } catch {
-      // fallback to admins collection check
-    }
-
-    // 3. Check admins/{uid} document in Firestore
-    try {
-      const adminSnap = await getDoc(doc(serverDb, 'admins', uid));
-      if (adminSnap.exists()) {
-        return { uid, email };
-      }
-    } catch {
-      // ignore
+    } catch (dbErr) {
+      console.error('[Admin Auth] Firestore lookup error for user:', uid, dbErr);
     }
 
     return null;

@@ -15,109 +15,113 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    // Single authoritative source of admin authority: users/{uid}.role == "admin"
     function isAdmin() {
-      return isSignedIn() && (
-        request.auth.token.email == 'shahinpc2018@gmail.com' ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
-        (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
-          (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
-            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'))
-      );
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
-    // 1. Admins collection: Superadmin and admin management
-    match /admins/{adminId} {
-      allow read: if isValidId(adminId) && (isAdmin() || (isSignedIn() && request.auth.uid == adminId));
-      allow create, update: if isValidId(adminId) && isAdmin();
-      // Safeguard: Never allow deleting the primary administrator UID to prevent lockouts
-      allow delete: if isValidId(adminId) && isAdmin() && adminId != request.auth.uid;
-    }
-
-    // 2. Users collection: Customers can register with role customer; Admin can manage all; Admin cannot delete own account
+    // 1. Users collection
+    // Customer registration MUST strictly enforce role == "customer".
+    // Customers can update their own profile fields, but NEVER the role field.
+    // Admin can manage users, but cannot delete or demote the current authenticated administrator account.
     match /users/{userId} {
       allow read: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow create: if isValidId(userId) && (
         isAdmin() ||
-        (isOwner(userId) && (!('role' in request.resource.data) || request.resource.data.role == 'customer'))
+        (isOwner(userId) && request.resource.data.role == 'customer')
       );
       allow update: if isValidId(userId) && (
-        isAdmin() ||
-        (isOwner(userId) && 
-          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
-        )
+        (isAdmin() && (userId != request.auth.uid || request.resource.data.role == 'admin')) ||
+        (isOwner(userId) &&
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']))
       );
-      // Safeguard: Cannot delete the currently logged in admin or any user with admin role
-      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid &&
-        (!exists(/databases/$(database)/documents/users/$(userId)) || resource.data.role != 'admin');
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid;
     }
 
-    // 3. Products collection (READ ONLY for customers, FULL for admin)
+    // 2. Admins collection: Admin-only access.
+    // Note: admins collection is application data only; authorization always checks users/{uid}.role == "admin".
+    // Protect current administrator from self-deletion.
+    match /admins/{adminId} {
+      allow read: if isValidId(adminId) && isAdmin();
+      allow create, update: if isValidId(adminId) && isAdmin();
+      allow delete: if isValidId(adminId) && isAdmin() && adminId != request.auth.uid;
+    }
+
+    // 3. Products collection (Public read, admin-only write)
     match /products/{productId} {
       allow read: if true;
-      allow write: if isValidId(productId) && isAdmin();
+      allow create, update, delete: if isValidId(productId) && isAdmin();
     }
 
     // 4. Orders collection
+    // Customers: create and read only their own order
+    // Admin: full access (get, list, create, update, delete) with original document IDs preserved during restore
     match /orders/{orderId} {
       allow get: if isValidId(orderId) && (isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid));
       allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isValidId(orderId) && isSignedIn() && (
-        request.resource.data.userId == request.auth.uid || isAdmin()
+      allow create: if isValidId(orderId) && (
+        isAdmin() ||
+        (isSignedIn() && request.resource.data.userId == request.auth.uid)
       );
       allow update, delete: if isValidId(orderId) && isAdmin();
     }
 
     // 5. Deliveries collection
+    // Customers: read only their own delivery record
+    // Admin: full access (create, read, update, delete)
     match /deliveries/{deliveryId} {
       allow get: if isValidId(deliveryId) && (isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid));
       allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isValidId(deliveryId) && isAdmin();
+      allow create, delete: if isValidId(deliveryId) && isAdmin();
       allow update: if isValidId(deliveryId) && (
         isAdmin() ||
-        (isSignedIn() && resource.data.userId == request.auth.uid && 
+        (isSignedIn() && resource.data.userId == request.auth.uid &&
           request.resource.data.diff(resource.data).affectedKeys().hasOnly(['downloadCount', 'lastDownloadedAt', 'firstDownloadedAt']))
       );
-      allow delete: if isValidId(deliveryId) && isAdmin();
     }
 
-    // 6. Settings collection (publicly readable configuration, admin editable)
+    // 6. Settings collection (Public read, admin-only management)
     match /settings/{settingId} {
       allow read: if true;
-      allow write: if isValidId(settingId) && isAdmin();
+      allow create, update, delete: if isValidId(settingId) && isAdmin();
     }
 
     // 7. Complaints collection
+    // Customers: create and read only their own complaint
+    // Admin: full management (read, update, delete)
     match /complaints/{complaintId} {
       allow get: if isValidId(complaintId) && (isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid));
       allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
-      allow create: if isValidId(complaintId) && isSignedIn() && (
+      allow create: if isValidId(complaintId) && (
         isAdmin() ||
-        (request.resource.data.userId == request.auth.uid &&
-         (!('status' in request.resource.data) || request.resource.data.status == 'pending') &&
-         (!('adminReply' in request.resource.data) || request.resource.data.adminReply == '' || request.resource.data.adminReply == null))
+        (isSignedIn() &&
+          request.resource.data.userId == request.auth.uid &&
+          (!('status' in request.resource.data) || request.resource.data.status == 'pending') &&
+          (!('adminReply' in request.resource.data) || request.resource.data.adminReply == '' || request.resource.data.adminReply == null))
       );
       allow update: if isValidId(complaintId) && (
         isAdmin() ||
         (isSignedIn() && resource.data.userId == request.auth.uid &&
-         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'adminReply', 'userId']))
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'adminReply', 'userId']))
       );
       allow delete: if isValidId(complaintId) && isAdmin();
     }
 
-    // 8. Connection test document
+    // 8. Connection test document (Public read, admin write)
     match /test/{testId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // 9. Coupons collection (publicly readable for checkout, admin managed)
+    // 9. Coupons collection (Public read for checkout discounts, admin-only management)
     match /coupons/{couponId} {
       allow read: if true;
-      allow write: if isValidId(couponId) && isAdmin();
+      allow create, update, delete: if isValidId(couponId) && isAdmin();
     }
 
-    // 10. Business & accounting collections (Admin-only full access for operations and backup/restore)
+    // 10. Business & accounting collections (Admin-only full access)
     match /sales/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /purchases/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /suppliers/{id} { allow read, write: if isValidId(id) && isAdmin(); }
@@ -129,5 +133,10 @@ service cloud.firestore {
     match /accounts/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /transactions/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /cashTransactions/{id} { allow read, write: if isValidId(id) && isAdmin(); }
+
+    // 11. Final Wildcard Deny Safety Net: explicitly block all other unspecified paths
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }

@@ -477,15 +477,32 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           getDoc(adminDocRef).catch(() => null),
         ]);
 
+        const isSuperAdmin = firebaseUser.email === 'shahinpc2018@gmail.com';
+        const isExistingLegitimateAdmin = Boolean(adminSnap && adminSnap.exists()) || isSuperAdmin;
+
+        if (isExistingLegitimateAdmin) {
+          // Guarantee admins/{uid} exists so Firestore Security Rules isAdmin() succeeds
+          if (!adminSnap || !adminSnap.exists()) {
+            await setDoc(
+              adminDocRef,
+              {
+                id: firebaseUser.uid,
+                email: firebaseUser.email || 'shahinpc2018@gmail.com',
+                role: 'admin',
+                updatedAt: new Date().toISOString(),
+              },
+              { merge: true }
+            ).catch(() => {});
+          }
+        }
+
         if (!userSnap || !userSnap.exists()) {
-          // Check if this UID is an existing legitimate admin in admins/{uid}
-          const isExistingLegitimateAdmin = Boolean(adminSnap && adminSnap.exists());
           const role: User['role'] = isExistingLegitimateAdmin ? 'admin' : 'customer';
 
-          // Every NEW registration receives role: "customer"
+          // Every NEW non-admin registration receives role: "customer"
           const newUser: User = {
             id: firebaseUser.uid,
-            name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Customer',
+            name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || (isSuperAdmin ? 'Super Admin' : 'Customer'),
             email: firebaseUser.email || '',
             phone: '',
             role,
@@ -494,6 +511,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
           await setDoc(userDocRef, newUser, { merge: true });
           console.info('[Firestore] User profile initialized:', `users/${firebaseUser.uid}`, 'role:', role);
+        } else if (isSuperAdmin && userSnap.data()?.role !== 'admin') {
+          // Promote Super Admin user profile in Firestore
+          await setDoc(userDocRef, { role: 'admin' }, { merge: true });
         }
 
         // Real-time synchronization of current user profile from users/{uid}
@@ -669,19 +689,36 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const cred = await signInWithPopup(auth, googleProvider);
       const uDoc = await getDoc(doc(db, 'users', cred.user.uid)).catch(() => null);
       let isAdm = false;
+      const isSuperAdm = cred.user.email === 'shahinpc2018@gmail.com';
       if (uDoc && uDoc.exists()) {
-        isAdm = uDoc.data()?.role === 'admin';
+        isAdm = isSuperAdm || uDoc.data()?.role === 'admin';
+        if (isSuperAdm && uDoc.data()?.role !== 'admin') {
+          await setDoc(doc(db, 'users', cred.user.uid), { role: 'admin' }, { merge: true });
+        }
       } else {
-        // New user through Google sign-in: ensure role: "customer"
+        isAdm = isSuperAdm;
+        // New user through Google sign-in: ensure role: "customer" (or "admin" if super admin)
         const newUser: User = {
           id: cred.user.uid,
-          name: cred.user.displayName || cred.user.email?.split('@')[0] || 'Customer',
+          name: cred.user.displayName || cred.user.email?.split('@')[0] || (isSuperAdm ? 'Super Admin' : 'Customer'),
           email: cred.user.email || '',
           phone: '',
-          role: 'customer',
+          role: isSuperAdm ? 'admin' : 'customer',
           joinedDate: new Date().toISOString().split('T')[0],
         };
         await setDoc(doc(db, 'users', cred.user.uid), newUser, { merge: true });
+        if (isSuperAdm) {
+          await setDoc(
+            doc(db, 'admins', cred.user.uid),
+            {
+              id: cred.user.uid,
+              email: cred.user.email,
+              role: 'admin',
+              createdAt: new Date().toISOString(),
+            },
+            { merge: true }
+          ).catch(() => {});
+        }
       }
       navigatePostLogin(isAdm);
       showToast(lang === 'bn' ? 'গুগল দিয়ে লগইন সফল!' : 'Signed in with Google!', 'success');

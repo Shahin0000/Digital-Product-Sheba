@@ -4,8 +4,113 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import { initializeApp, getApps, getApp } from 'firebase/app';
+import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import firebaseConfig from './firebase-applet-config.json';
 
 dotenv.config();
+
+const serverFirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
+const serverDb = getFirestore(serverFirebaseApp);
+
+const ALL_BACKUP_COLLECTIONS = [
+  'products',
+  'orders',
+  'deliveries',
+  'complaints',
+  'settings',
+  'users',
+  'admins',
+  'coupons',
+  'sales',
+  'purchases',
+  'suppliers',
+  'supplierPayments',
+  'expenses',
+  'stockMovements',
+  'returns',
+  'payments',
+  'accounts',
+  'transactions',
+  'cashTransactions',
+] as const;
+
+const BUSINESS_DATA_COLLECTIONS = [
+  'products',
+  'orders',
+  'deliveries',
+  'complaints',
+  'coupons',
+  'sales',
+  'purchases',
+  'suppliers',
+  'supplierPayments',
+  'expenses',
+  'stockMovements',
+  'returns',
+  'payments',
+  'accounts',
+  'transactions',
+  'cashTransactions',
+] as const;
+
+async function authenticateAdminToken(req: Request): Promise<{ uid: string; email: string } | null> {
+  const authHeader = req.headers.authorization;
+  const token = authHeader?.startsWith('Bearer ')
+    ? authHeader.substring(7)
+    : (req.body?.idToken as string | undefined);
+
+  if (!token) return null;
+
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseConfig.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken: token }),
+      }
+    );
+
+    if (!res.ok) return null;
+    const data = await res.json();
+    const user = data.users?.[0];
+    if (!user || !user.localId) return null;
+
+    const uid = user.localId;
+    const email = (user.email || '').toLowerCase();
+
+    // 1. Primary superadmin email verification
+    if (email === 'shahinpc2018@gmail.com') {
+      return { uid, email };
+    }
+
+    // 2. Check users/{uid} role in Firestore
+    try {
+      const userSnap = await getDoc(doc(serverDb, 'users', uid));
+      if (userSnap.exists() && userSnap.data()?.role === 'admin') {
+        return { uid, email };
+      }
+    } catch {
+      // fallback to admins collection check
+    }
+
+    // 3. Check admins/{uid} document in Firestore
+    try {
+      const adminSnap = await getDoc(doc(serverDb, 'admins', uid));
+      if (adminSnap.exists()) {
+        return { uid, email };
+      }
+    } catch {
+      // ignore
+    }
+
+    return null;
+  } catch (err) {
+    console.error('Error verifying admin token:', err);
+    return null;
+  }
+}
 
 const app = express();
 const PORT = 3000;
@@ -45,6 +150,203 @@ app.get('/api/health', (req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     service: 'Digital Product Sheba Delivery API',
   });
+});
+
+// ==========================================
+// ADMIN DATABASE BACKUP, RESTORE & FORMAT
+// ==========================================
+app.post('/api/admin/backup', async (req: Request, res: Response) => {
+  try {
+    const adminAuth = await authenticateAdminToken(req);
+    if (!adminAuth) {
+      return res.status(403).json({ error: 'Access Denied: Valid administrator authentication required.' });
+    }
+
+    const collectionsData: Record<string, Record<string, any>> = {};
+    let totalCount = 0;
+
+    for (const colName of ALL_BACKUP_COLLECTIONS) {
+      collectionsData[colName] = {};
+      try {
+        const colRef = collection(serverDb, colName);
+        const snapshot = await getDocs(colRef);
+        snapshot.forEach((docSnap) => {
+          collectionsData[colName][docSnap.id] = docSnap.data();
+          totalCount++;
+        });
+      } catch (colErr: any) {
+        // As requested: If a collection is empty or unseeded, include it with count: 0
+        console.warn(`[Admin Backup] Collection "${colName}" empty or unseeded:`, colErr?.message);
+        collectionsData[colName] = {};
+      }
+    }
+
+    const backup = {
+      backupVersion: '1.0',
+      createdAt: new Date().toISOString(),
+      projectName: 'Minarul Fashion House',
+      totalDocuments: totalCount,
+      collections: collectionsData,
+    };
+
+    return res.json({ success: true, backup });
+  } catch (err: any) {
+    console.error('[Admin Backup Error]:', err);
+    return res.status(500).json({ error: 'Failed to generate database backup', details: err?.message || String(err) });
+  }
+});
+
+app.post('/api/admin/restore', async (req: Request, res: Response) => {
+  try {
+    const adminAuth = await authenticateAdminToken(req);
+    if (!adminAuth) {
+      return res.status(403).json({ error: 'Access Denied: Valid administrator authentication required.' });
+    }
+
+    const { backup } = req.body;
+    if (!backup || !backup.collections || typeof backup.collections !== 'object') {
+      return res.status(400).json({ error: 'Invalid backup payload: missing collections object.' });
+    }
+
+    // Ensure administrator record exists in admins collection so security rules always recognize this admin
+    if (adminAuth.uid) {
+      try {
+        await setDoc(
+          doc(serverDb, 'admins', adminAuth.uid),
+          {
+            id: adminAuth.uid,
+            email: adminAuth.email,
+            role: 'admin',
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (adminSetErr) {
+        console.warn('[Admin Restore] Admin privileges record update:', adminSetErr);
+      }
+    }
+
+    let restoredCount = 0;
+    const restoredByCollection: Record<string, number> = {};
+
+    for (const [colName, docsMap] of Object.entries(backup.collections)) {
+      restoredByCollection[colName] = 0;
+      if (!docsMap || typeof docsMap !== 'object') continue;
+
+      const entries = Object.entries(docsMap as Record<string, any>);
+      const CHUNK_SIZE = 5;
+
+      for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
+        const chunk = entries.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async ([docId, rawData]) => {
+            if (!docId || rawData === undefined) return;
+            try {
+              const docData = { ...rawData };
+              // Protect currently active administrator from being downgraded
+              if (colName === 'users' && docId === adminAuth.uid) {
+                docData.role = 'admin';
+              }
+              await setDoc(doc(serverDb, colName, docId), docData, { merge: true });
+              restoredCount++;
+              restoredByCollection[colName]++;
+            } catch (docErr: any) {
+              console.error(`[Admin Restore Error] Collection ${colName}, doc ${docId}:`, docErr);
+              throw new Error(`Restore failed on ${colName}/${docId}: ${docErr?.message || docErr}`);
+            }
+          })
+        );
+      }
+    }
+
+    return res.json({ success: true, restoredCount, restoredByCollection });
+  } catch (err: any) {
+    console.error('[Admin Restore Exception]:', err);
+    return res.status(500).json({ error: err?.message || 'Failed to restore backup' });
+  }
+});
+
+app.post('/api/admin/format', async (req: Request, res: Response) => {
+  try {
+    const adminAuth = await authenticateAdminToken(req);
+    if (!adminAuth) {
+      return res.status(403).json({ error: 'Access Denied: Valid administrator authentication required.' });
+    }
+
+    const { confirmText } = req.body;
+    if (confirmText !== 'DELETE') {
+      return res.status(400).json({ error: 'Please provide confirmText="DELETE" to confirm formatting.' });
+    }
+
+    let deletedCount = 0;
+    const deletedByCollection: Record<string, number> = {};
+
+    // 1. Delete business collections
+    for (const colName of BUSINESS_DATA_COLLECTIONS) {
+      deletedByCollection[colName] = 0;
+      try {
+        const colRef = collection(serverDb, colName);
+        const snapshot = await getDocs(colRef);
+        const docsToDelete = snapshot.docs;
+        const CHUNK_SIZE = 5;
+
+        for (let i = 0; i < docsToDelete.length; i += CHUNK_SIZE) {
+          const chunk = docsToDelete.slice(i, i + CHUNK_SIZE);
+          await Promise.all(
+            chunk.map(async (d) => {
+              try {
+                await deleteDoc(d.ref);
+                deletedCount++;
+                deletedByCollection[colName]++;
+              } catch (delErr) {
+                console.warn(`Failed to delete doc ${d.id} in ${colName}:`, delErr);
+              }
+            })
+          );
+        }
+      } catch (colErr) {
+        console.warn(`[Format] Collection ${colName} read/delete warning:`, colErr);
+      }
+    }
+
+    // 2. Wipe non-admin users, STRICTLY PRESERVING admin accounts and currentAdminUid!
+    try {
+      deletedByCollection['users'] = 0;
+      const usersRef = collection(serverDb, 'users');
+      const userSnap = await getDocs(usersRef);
+
+      const customersToDelete = userSnap.docs.filter((d) => {
+        const uData = d.data();
+        if (d.id === adminAuth.uid) return false;
+        if (uData.role === 'admin') return false;
+        if (uData.email === 'shahinpc2018@gmail.com') return false;
+        return true;
+      });
+
+      const CHUNK_SIZE = 5;
+      for (let i = 0; i < customersToDelete.length; i += CHUNK_SIZE) {
+        const chunk = customersToDelete.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async (d) => {
+            try {
+              await deleteDoc(d.ref);
+              deletedCount++;
+              deletedByCollection['users']++;
+            } catch (delErr) {
+              console.warn(`Failed to delete customer ${d.id}:`, delErr);
+            }
+          })
+        );
+      }
+    } catch (usersErr) {
+      console.warn('[Format] Customers delete warning:', usersErr);
+    }
+
+    return res.json({ success: true, deletedCount, deletedByCollection });
+  } catch (err: any) {
+    console.error('[Admin Format Error]:', err);
+    return res.status(500).json({ error: 'Failed to format business data', details: err?.message || String(err) });
+  }
 });
 
 // ==========================================

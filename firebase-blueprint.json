@@ -131,6 +131,38 @@
         "createdAt": { "type": "string", "description": "Creation timestamp" }
       },
       "required": ["movementId", "productId", "movementType", "quantity", "previousStock", "newStock", "reason"]
+    },
+    "Coupon": {
+      "title": "Coupon",
+      "description": "Discount voucher for store checkout",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "description": "Uppercase coupon discount code" },
+        "discountPercent": { "type": "number", "description": "Discount percentage value" },
+        "active": { "type": "boolean", "description": "Is coupon currently active" }
+      },
+      "required": ["code", "discountPercent"]
+    },
+    "Complaint": {
+      "title": "Complaint",
+      "description": "Customer support complaint ticket",
+      "type": "object",
+      "properties": {
+        "complaintId": { "type": "string", "description": "Ticket identifier" },
+        "userId": { "type": "string", "description": "Submitting user UID" },
+        "status": { "type": "string", "description": "Ticket status" },
+        "createdAt": { "type": "string", "description": "Timestamp" }
+      },
+      "required": ["complaintId", "userId"]
+    },
+    "GenericBusinessDoc": {
+      "title": "GenericBusinessDoc",
+      "description": "Accounting or management business record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Record ID" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" }
+      }
     }
   },
   "firestore": {
@@ -161,6 +193,54 @@
     "/settings/{settingId}": {
       "schema": "Settings",
       "description": "Store configuration, payment numbers, and branding"
+    },
+    "/coupons/{couponId}": {
+      "schema": "Coupon",
+      "description": "Promotional discount coupons"
+    },
+    "/complaints/{complaintId}": {
+      "schema": "Complaint",
+      "description": "Customer tickets and complaints"
+    },
+    "/sales/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Sales ledger records"
+    },
+    "/purchases/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Purchases ledger records"
+    },
+    "/suppliers/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Suppliers database"
+    },
+    "/supplierPayments/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Supplier payments ledger"
+    },
+    "/expenses/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Operational expenses log"
+    },
+    "/returns/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Order returns log"
+    },
+    "/payments/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Payment records log"
+    },
+    "/accounts/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Financial accounts"
+    },
+    "/transactions/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Financial transactions log"
+    },
+    "/cashTransactions/{id}": {
+      "schema": "GenericBusinessDoc",
+      "description": "Cash transaction records"
     }
   }
 }

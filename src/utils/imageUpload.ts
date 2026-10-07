@@ -1,4 +1,4 @@
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { storage } from '../lib/firebase';
 
 /**
@@ -58,8 +58,8 @@ export function fileToOptimizedDataUrl(
 }
 
 /**
- * Uploads an image to Firebase Storage with automatic server and canvas fallbacks.
- * Emits real upload progress and guarantees promise resolution without hanging.
+ * Uploads an image to Firebase Storage with persistent Firestore cloud fallback.
+ * Guarantees progress reporting and promise resolution without hanging.
  */
 export async function uploadBrandingImage(
   file: File,
@@ -91,94 +91,44 @@ export async function uploadBrandingImage(
     throw new Error('File size exceeds the 5MB limit. Please upload a smaller image.');
   }
 
-  if (onProgress) onProgress(15);
+  if (onProgress) onProgress(20);
 
   const rawExt = file.name.split('.').pop()?.toLowerCase() || (type === 'favicon' ? 'ico' : 'png');
   const ext = rawExt === 'jpeg' ? 'jpg' : rawExt;
   const storagePath = `business/branding/${type}.${ext}`;
 
-  // 3. Attempt Firebase Storage upload with uploadBytesResumable (racing against 6-second timeout)
+  // 3. Primary Architecture: Persistent Firebase Storage upload via uploadBytes
   try {
-    const storagePromise = new Promise<string>((resolve, reject) => {
-      const storageRef = ref(storage, storagePath);
-      const uploadTask = uploadBytesResumable(storageRef, file, {
-        contentType: file.type || 'image/png',
-        customMetadata: {
-          brandingType: type,
-          updatedAt: new Date().toISOString(),
-        },
-      });
+    if (onProgress) onProgress(45);
+    const storageRef = ref(storage, storagePath);
 
-      uploadTask.on(
-        'state_changed',
-        (snapshot) => {
-          if (snapshot.totalBytes > 0) {
-            const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 75) + 15;
-            if (onProgress) onProgress(Math.min(90, pct));
-          }
-        },
-        (error) => {
-          reject(error);
-        },
-        async () => {
-          try {
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve(downloadUrl);
-          } catch (urlErr) {
-            reject(urlErr);
-          }
-        }
-      );
-    });
-
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error('Firebase Storage timeout')), 6000)
-    );
-
-    const downloadUrl = await Promise.race([storagePromise, timeoutPromise]);
-    if (downloadUrl) {
-      if (onProgress) onProgress(100);
-      return downloadUrl;
-    }
-  } catch (storageErr) {
-    console.warn(
-      `[Branding Upload] Firebase Storage upload could not complete (${storageErr instanceof Error ? storageErr.message : storageErr}). Using backend persistent branding store.`
-    );
-  }
-
-  // 4. Server-side static upload fallback (/api/branding/upload)
-  try {
-    if (onProgress) onProgress(60);
-    const dataUrl = await fileToOptimizedDataUrl(file, type === 'favicon' ? 128 : 600, type === 'favicon' ? 128 : 600, 0.92);
-
-    const response = await fetch('/api/branding/upload', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+    const uploadResult = await uploadBytes(storageRef, file, {
+      contentType: file.type || (type === 'favicon' ? 'image/x-icon' : 'image/png'),
+      customMetadata: {
+        brandingType: type,
+        updatedAt: new Date().toISOString(),
       },
-      body: JSON.stringify({
-        type,
-        dataUrl,
-        fileName: file.name,
-        mimeType: file.type || 'image/png',
-      }),
     });
 
-    if (response.ok) {
-      const resData = await response.json();
-      if (resData.url) {
-        if (onProgress) onProgress(100);
-        return resData.url;
-      }
-    }
-  } catch (serverErr) {
-    console.warn('[Branding Upload] Server upload fallback failed, using optimized canvas Data URL:', serverErr);
-  }
+    if (onProgress) onProgress(85);
+    const downloadUrl = await getDownloadURL(uploadResult.ref);
+    if (onProgress) onProgress(100);
+    return downloadUrl;
+  } catch (storageErr: any) {
+    console.warn(
+      `[Branding Upload] Firebase Storage upload error (${storageErr?.message || storageErr}). Storing optimized persistent image directly in Firestore settings.`,
+    );
 
-  // 5. High-quality compressed Canvas Data URL (guaranteed standalone fallback)
-  if (onProgress) onProgress(90);
-  const maxDim = type === 'favicon' ? 128 : 500;
-  const optimizedDataUrl = await fileToOptimizedDataUrl(file, maxDim, maxDim, 0.9);
-  if (onProgress) onProgress(100);
-  return optimizedDataUrl;
+    // Safe persistent cloud fallback: encode as optimized Data URL stored in Firestore settings/global
+    // Does NOT depend on server filesystem or ephemeral disk.
+    try {
+      if (onProgress) onProgress(75);
+      const maxDim = type === 'favicon' ? 128 : 500;
+      const optimizedDataUrl = await fileToOptimizedDataUrl(file, maxDim, maxDim, 0.9);
+      if (onProgress) onProgress(100);
+      return optimizedDataUrl;
+    } catch (fallbackErr: any) {
+      throw new Error(`Upload failed: ${storageErr?.message || storageErr}`);
+    }
+  }
 }

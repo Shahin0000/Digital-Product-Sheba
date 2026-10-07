@@ -17,21 +17,24 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
+        (request.auth.token.email == 'shahinpc2018@gmail.com' && request.auth.token.email_verified == true) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
         (exists(/databases/$(database)/documents/admins/$(request.auth.uid)) &&
           (!exists(/databases/$(database)/documents/users/$(request.auth.uid)) ||
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'))
+            get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'))
       );
     }
 
-    // 1. Admins collection
+    // 1. Admins collection: Superadmin and admin management
     match /admins/{adminId} {
       allow read: if isValidId(adminId) && (isAdmin() || (isSignedIn() && request.auth.uid == adminId));
-      allow write: if isValidId(adminId) && isAdmin();
+      allow create, update: if isValidId(adminId) && isAdmin();
+      // Safeguard: Never allow deleting the primary administrator UID to prevent lockouts
+      allow delete: if isValidId(adminId) && isAdmin() && adminId != request.auth.uid;
     }
 
-    // 2. Users collection
+    // 2. Users collection: Customers can register with role customer; Admin can manage all; Admin cannot delete own account
     match /users/{userId} {
       allow read: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow create: if isValidId(userId) && (
@@ -44,7 +47,9 @@ service cloud.firestore {
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
         )
       );
-      allow delete: if isValidId(userId) && isAdmin();
+      // Safeguard: Cannot delete the currently logged in admin or any user with admin role
+      allow delete: if isValidId(userId) && isAdmin() && userId != request.auth.uid &&
+        (!exists(/databases/$(database)/documents/users/$(userId)) || resource.data.role != 'admin');
     }
 
     // 3. Products collection (READ ONLY for customers, FULL for admin)
@@ -112,7 +117,7 @@ service cloud.firestore {
       allow write: if isValidId(couponId) && isAdmin();
     }
 
-    // 10. Business & accounting collections
+    // 10. Business & accounting collections (Admin-only full access for operations and backup/restore)
     match /sales/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /purchases/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /suppliers/{id} { allow read, write: if isValidId(id) && isAdmin(); }
@@ -124,10 +129,5 @@ service cloud.firestore {
     match /accounts/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /transactions/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /cashTransactions/{id} { allow read, write: if isValidId(id) && isAdmin(); }
-
-    // Catch-all rule for administrators: An authenticated admin can read and write documents across any collection
-    match /{collectionName}/{docId} {
-      allow read, write: if isValidId(docId) && isAdmin();
-    }
   }
 }

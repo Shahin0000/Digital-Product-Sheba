@@ -147,10 +147,9 @@ export async function generateFullDatabaseBackup(
         collectionsData[colName][docSnap.id] = serializeFirestoreData(data);
         totalCount++;
       });
-    } catch (err) {
-      console.warn(`Collection "${colName}" read failed or does not exist:`, err);
-      // If collection doesn't exist, keep an empty map
-      collectionsData[colName] = {};
+    } catch (err: any) {
+      console.error(`Collection "${colName}" read failed:`, err);
+      throw new Error(`Backup incomplete: Failed to export collection "${colName}". Error: ${err?.message || err}`);
     }
   }
 
@@ -366,6 +365,12 @@ export async function restoreBackupToFirestore(
           if (!docId || rawData === undefined) return;
           try {
             const deserializedData = deserializeFirestoreData(rawData);
+
+            // Safeguard: The currently logged in administrator must NEVER be downgraded
+            if (colName === 'users' && docId === auth.currentUser?.uid) {
+              deserializedData.role = 'admin';
+            }
+
             const docRef = doc(db, colName, docId);
             await setDoc(docRef, deserializedData, { merge: true });
 

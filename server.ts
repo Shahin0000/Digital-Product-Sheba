@@ -13,14 +13,6 @@ const PORT = 3000;
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
 
-// Ensure branding directories exist and serve statically
-const brandingDir = path.join(process.cwd(), 'dist', 'branding');
-const publicBrandingDir = path.join(process.cwd(), 'public', 'branding');
-if (!fs.existsSync(brandingDir)) fs.mkdirSync(brandingDir, { recursive: true });
-if (!fs.existsSync(publicBrandingDir)) fs.mkdirSync(publicBrandingDir, { recursive: true });
-app.use('/branding', express.static(brandingDir));
-app.use('/branding', express.static(publicBrandingDir));
-
 // In-memory signed download token store (token -> { orderId, productId, fileUrl, fileName, expiresAt, userId })
 const activeDownloadTokens = new Map<
   string,
@@ -53,71 +45,6 @@ app.get('/api/health', (req: Request, res: Response) => {
     timestamp: new Date().toISOString(),
     service: 'Digital Product Sheba Delivery API',
   });
-});
-
-// ==========================================
-// BRANDING LOGO & FAVICON UPLOAD ENDPOINT
-// ==========================================
-app.post('/api/branding/upload', async (req: Request, res: Response) => {
-  try {
-    const { type, dataUrl, fileName, mimeType } = req.body;
-
-    if (!type || (type !== 'logo' && type !== 'favicon')) {
-      return res.status(400).json({ error: 'type must be "logo" or "favicon"' });
-    }
-
-    if (!dataUrl || typeof dataUrl !== 'string') {
-      return res.status(400).json({ error: 'dataUrl is required' });
-    }
-
-    const allowedMimes = [
-      'image/png',
-      'image/jpeg',
-      'image/jpg',
-      'image/webp',
-      'image/x-icon',
-      'image/vnd.microsoft.icon',
-      'image/svg+xml',
-    ];
-    const detectedMime = (mimeType || dataUrl.split(';')[0]?.replace('data:', '') || 'image/png').toLowerCase();
-    if (!allowedMimes.includes(detectedMime)) {
-      return res.status(400).json({ error: 'Unsupported file type. Allowed formats: PNG, JPG, JPEG, WEBP, ICO, SVG.' });
-    }
-
-    const base64Data = dataUrl.replace(/^data:[^;]+;base64,/, '');
-    const buffer = Buffer.from(base64Data, 'base64');
-
-    if (buffer.length > 5 * 1024 * 1024) {
-      return res.status(400).json({ error: 'File exceeds 5MB size limit.' });
-    }
-
-    let ext = 'png';
-    if (detectedMime.includes('webp')) ext = 'webp';
-    else if (detectedMime.includes('jpeg') || detectedMime.includes('jpg')) ext = 'jpg';
-    else if (detectedMime.includes('icon')) ext = 'ico';
-    else if (detectedMime.includes('svg')) ext = 'svg';
-
-    const safeFilename = `${type}.${ext}`;
-    const filePathDist = path.join(brandingDir, safeFilename);
-    const filePathPub = path.join(publicBrandingDir, safeFilename);
-
-    await fs.promises.writeFile(filePathDist, buffer);
-    await fs.promises.writeFile(filePathPub, buffer);
-
-    const host = req.get('host') || `localhost:${PORT}`;
-    const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
-    const publicUrl = `${protocol}://${host}/branding/${safeFilename}?v=${Date.now()}`;
-
-    return res.json({
-      success: true,
-      url: publicUrl,
-      fileName: safeFilename,
-      size: buffer.length,
-    });
-  } catch (err: any) {
-    console.error('Branding upload error:', err);
-    return res.status(500).json({ error: err.message || 'Branding upload failed' });
-  }
 });
 
 // ==========================================

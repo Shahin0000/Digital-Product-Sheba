@@ -4,14 +4,138 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, getDoc } from 'firebase/firestore';
+import { initializeApp as initAdminApp, cert, applicationDefault, getApps } from 'firebase-admin/app';
+import { getFirestore, Firestore } from 'firebase-admin/firestore';
+import { getAuth, Auth } from 'firebase-admin/auth';
 import firebaseConfig from './firebase-applet-config.json';
 
 dotenv.config();
 
-const serverFirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-const serverDb = getFirestore(serverFirebaseApp);
+// ==========================================
+// FIREBASE ADMIN SDK INITIALIZATION (ROBUST & IDEMPOTENT)
+// ==========================================
+interface FirebaseAdminStatus {
+  configured: boolean;
+  initialized: boolean;
+  projectId: string | null;
+  maskedClientEmail: string | null;
+  error: string | null;
+}
+
+let adminDb: Firestore | null = null;
+let adminAuthInstance: Auth | null = null;
+const adminStatus: FirebaseAdminStatus = {
+  configured: false,
+  initialized: false,
+  projectId: null,
+  maskedClientEmail: null,
+  error: null,
+};
+
+function initFirebaseAdmin(): void {
+  try {
+    const rawCred = process.env.FIREBASE_SERVICE_ACCOUNT;
+    if (rawCred) {
+      adminStatus.configured = true;
+      let cred: any;
+      try {
+        if (typeof rawCred === 'string') {
+          const trimmed = rawCred.trim();
+          if (trimmed.startsWith('{')) {
+            cred = JSON.parse(trimmed);
+          } else {
+            // Support base64-encoded credential string
+            const decoded = Buffer.from(trimmed, 'base64').toString('utf8');
+            cred = JSON.parse(decoded);
+          }
+        } else {
+          cred = rawCred;
+        }
+      } catch (parseErr: any) {
+        adminStatus.initialized = false;
+        adminStatus.error = `FIREBASE_ADMIN_INITIALIZATION_FAILED: Could not parse FIREBASE_SERVICE_ACCOUNT JSON (${parseErr?.message || parseErr}).`;
+        console.error('[Firebase Admin] Error parsing FIREBASE_SERVICE_ACCOUNT:', parseErr?.message);
+        return;
+      }
+
+      if (!cred || typeof cred !== 'object') {
+        adminStatus.initialized = false;
+        adminStatus.error = 'FIREBASE_ADMIN_INITIALIZATION_FAILED: FIREBASE_SERVICE_ACCOUNT must be a valid JSON object.';
+        return;
+      }
+
+      const expectedProjectId = 'digiral-product-service';
+      const actualProjectId = cred.project_id || firebaseConfig.projectId;
+
+      if (actualProjectId !== expectedProjectId) {
+        adminStatus.initialized = false;
+        adminStatus.error = `FIREBASE_ADMIN_INITIALIZATION_FAILED: Service account project_id "${actualProjectId}" does not match required Firebase project "${expectedProjectId}".`;
+        console.error(`[Firebase Admin] Project mismatch: got "${actualProjectId}", expected "${expectedProjectId}"`);
+        return;
+      }
+
+      // Normalize private_key escaped newlines if present
+      if (cred.private_key && typeof cred.private_key === 'string') {
+        cred.private_key = cred.private_key.replace(/\\n/g, '\n');
+      }
+
+      const existingApps = getApps();
+      let adminApp = existingApps.find((a) => a.name === 'admin-service');
+      if (!adminApp) {
+        adminApp = initAdminApp(
+          {
+            credential: cert(cred),
+            projectId: expectedProjectId,
+          },
+          'admin-service'
+        );
+      }
+
+      adminDb = getFirestore(adminApp);
+      adminAuthInstance = getAuth(adminApp);
+      adminStatus.initialized = true;
+      adminStatus.projectId = expectedProjectId;
+      if (cred.client_email && typeof cred.client_email === 'string') {
+        const parts = cred.client_email.split('@');
+        adminStatus.maskedClientEmail = `${parts[0].slice(0, 4)}***@${parts[1] || ''}`;
+      }
+      adminStatus.error = null;
+      console.log(`[Firebase Admin] Successfully initialized for project "${expectedProjectId}"`);
+    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+      const existingApps = getApps();
+      let adminApp = existingApps.find((a) => a.name === 'admin-adc');
+      if (!adminApp) {
+        adminApp = initAdminApp(
+          {
+            credential: applicationDefault(),
+            projectId: firebaseConfig.projectId || 'digiral-product-service',
+          },
+          'admin-adc'
+        );
+      }
+      adminDb = getFirestore(adminApp);
+      adminAuthInstance = getAuth(adminApp);
+      adminStatus.configured = true;
+      adminStatus.initialized = true;
+      adminStatus.projectId = firebaseConfig.projectId;
+      adminStatus.error = null;
+      console.log('[Firebase Admin] Initialized with GOOGLE_APPLICATION_CREDENTIALS');
+    } else {
+      adminStatus.configured = false;
+      adminStatus.initialized = false;
+      adminStatus.error =
+        'FIREBASE_ADMIN_NOT_CONFIGURED: FIREBASE_SERVICE_ACCOUNT environment variable is missing in this Netlify / server runtime. Please configure FIREBASE_SERVICE_ACCOUNT in Netlify site settings -> Environment variables.';
+      console.warn('[Firebase Admin]', adminStatus.error);
+    }
+  } catch (err: any) {
+    adminStatus.initialized = false;
+    adminStatus.error = `FIREBASE_ADMIN_INITIALIZATION_FAILED: ${err?.message || String(err)}`;
+    console.error('[Firebase Admin] Initialization failed:', err?.message || err);
+  }
+}
+
+// Initial bootstrap attempt
+initFirebaseAdmin();
 
 const ALL_BACKUP_COLLECTIONS = [
   'products',
@@ -33,6 +157,7 @@ const ALL_BACKUP_COLLECTIONS = [
   'accounts',
   'transactions',
   'cashTransactions',
+  'categories',
 ] as const;
 
 const BUSINESS_DATA_COLLECTIONS = [
@@ -40,6 +165,7 @@ const BUSINESS_DATA_COLLECTIONS = [
   'orders',
   'deliveries',
   'complaints',
+  'categories',
   'coupons',
   'sales',
   'purchases',
@@ -54,46 +180,148 @@ const BUSINESS_DATA_COLLECTIONS = [
   'cashTransactions',
 ] as const;
 
-async function authenticateAdminToken(req: Request): Promise<{ uid: string; email: string } | null> {
+function serializeAdminFirestoreData(obj: any): any {
+  if (obj === null || obj === undefined) return null;
+  if (obj && typeof obj.toDate === 'function') {
+    return {
+      __type: 'firestore_timestamp',
+      seconds: obj.seconds ?? obj._seconds,
+      nanoseconds: obj.nanoseconds ?? obj._nanoseconds ?? 0,
+      iso: obj.toDate().toISOString(),
+    };
+  }
+  if (obj instanceof Date) {
+    return {
+      __type: 'date',
+      iso: obj.toISOString(),
+    };
+  }
+  if (Array.isArray(obj)) {
+    return obj.map(serializeAdminFirestoreData);
+  }
+  if (typeof obj === 'object') {
+    const serialized: Record<string, any> = {};
+    for (const [key, val] of Object.entries(obj)) {
+      if (
+        key.toLowerCase().includes('password') ||
+        key.toLowerCase().includes('credentialhash') ||
+        key.toLowerCase().includes('authtoken')
+      ) {
+        continue;
+      }
+      serialized[key] = serializeAdminFirestoreData(val);
+    }
+    return serialized;
+  }
+  return obj;
+}
+
+function deserializeAdminData(obj: any): any {
+  if (obj === null || obj === undefined) return null;
+  if (typeof obj === 'object') {
+    if (obj.__type === 'firestore_timestamp' && typeof obj.seconds === 'number') {
+      const { Timestamp: AdminTimestamp } = require('firebase-admin/firestore');
+      return new AdminTimestamp(obj.seconds, obj.nanoseconds || 0);
+    }
+    if (obj.__type === 'date' && typeof obj.iso === 'string') {
+      return new Date(obj.iso);
+    }
+    if (Array.isArray(obj)) {
+      return obj.map(deserializeAdminData);
+    }
+    const res: Record<string, any> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      res[k] = deserializeAdminData(v);
+    }
+    return res;
+  }
+  return obj;
+}
+
+interface AuthResult {
+  success: boolean;
+  uid?: string;
+  email?: string;
+  status: number;
+  error?: string;
+}
+
+async function authenticateAdminToken(req: Request): Promise<AuthResult> {
+  // If not yet initialized, re-check once in case environment variables were injected after module load
+  if (!adminDb || !adminAuthInstance) {
+    initFirebaseAdmin();
+  }
+
+  if (!adminDb || !adminAuthInstance) {
+    return {
+      success: false,
+      status: 503,
+      error:
+        adminStatus.error ||
+        'FIREBASE_ADMIN_NOT_CONFIGURED: Privileged admin operations require Firebase Admin SDK. Please configure FIREBASE_SERVICE_ACCOUNT in Netlify site environment variables.',
+    };
+  }
+
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith('Bearer ')
     ? authHeader.substring(7)
     : (req.body?.idToken as string | undefined);
 
-  if (!token) return null;
+  if (!token) {
+    return {
+      success: false,
+      status: 401,
+      error: 'Access Denied: Missing administrator authentication token (Bearer ID token required).',
+    };
+  }
 
   try {
-    const res = await fetch(
-      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseConfig.apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ idToken: token }),
-      }
-    );
+    const decoded = await adminAuthInstance.verifyIdToken(token);
+    const uid = decoded.uid;
+    const email = (decoded.email || '').toLowerCase();
 
-    if (!res.ok) return null;
-    const data = await res.json();
-    const user = data.users?.[0];
-    if (!user || !user.localId) return null;
-
-    const uid = user.localId;
-    const email = (user.email || '').toLowerCase();
-
-    // The ONLY source of admin authority is users/{uid}.role == "admin" in Firestore
-    try {
-      const userSnap = await getDoc(doc(serverDb, 'users', uid));
-      if (userSnap.exists() && userSnap.data()?.role === 'admin') {
-        return { uid, email };
-      }
-    } catch (dbErr) {
-      console.error('[Admin Auth] Firestore lookup error for user:', uid, dbErr);
+    // The single source of admin authority: users/{uid}.role === "admin" in Admin Firestore
+    const userDoc = await adminDb.collection('users').doc(uid).get();
+    if (!userDoc.exists) {
+      console.warn(`[Admin Auth] User document "users/${uid}" does not exist in Firestore`);
+      return {
+        success: false,
+        status: 403,
+        error: `Access Denied: User document "users/${uid}" does not exist in database.`,
+      };
     }
 
-    return null;
-  } catch (err) {
-    console.error('Error verifying admin token:', err);
-    return null;
+    const userData = userDoc.data();
+    if (userData?.role !== 'admin') {
+      console.warn(`[Admin Auth] User ${uid} has role "${userData?.role || 'none'}", rejected (not "admin")`);
+      return {
+        success: false,
+        status: 403,
+        error: `Access Denied: Valid administrator role required (users/{uid}.role is "${userData?.role || 'none'}").`,
+      };
+    }
+
+    return {
+      success: true,
+      uid,
+      email,
+      status: 200,
+    };
+  } catch (authErr: any) {
+    const msg = authErr?.message || String(authErr);
+    console.warn('[Admin Auth] Firebase Admin token verification failed:', msg);
+    if (msg.toLowerCase().includes('expired') || msg.toLowerCase().includes('token')) {
+      return {
+        success: false,
+        status: 401,
+        error: `Access Denied: Invalid or expired Firebase ID token (${msg}).`,
+      };
+    }
+    return {
+      success: false,
+      status: 403,
+      error: `Access Denied: Administrator verification failed (${msg}).`,
+    };
   }
 }
 
@@ -102,6 +330,25 @@ const PORT = 3000;
 
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true, limit: '15mb' }));
+
+// Enable CORS for client calls from custom domains and Netlify preview URLs
+app.use((req: Request, res: Response, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
+// Rewrite Netlify Functions redirect path: /.netlify/functions/api/* -> /api/*
+app.use((req: Request, res: Response, next) => {
+  if (req.url.startsWith('/.netlify/functions/api')) {
+    req.url = req.url.replace('/.netlify/functions/api', '/api');
+  }
+  next();
+});
 
 // In-memory signed download token store (token -> { orderId, productId, fileUrl, fileName, expiresAt, userId })
 const activeDownloadTokens = new Map<
@@ -117,7 +364,7 @@ const activeDownloadTokens = new Map<
 >();
 
 // Clean expired tokens every 15 minutes
-setInterval(() => {
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [token, data] of activeDownloadTokens.entries()) {
     if (data.expiresAt < now) {
@@ -125,11 +372,12 @@ setInterval(() => {
     }
   }
 }, 15 * 60 * 1000);
+if (cleanupInterval.unref) cleanupInterval.unref();
 
 // ==========================================
-// 1. HEALTH CHECK
+// 1. HEALTH & ADMIN DIAGNOSTICS CHECK
 // ==========================================
-app.get('/api/health', (req: Request, res: Response) => {
+app.get(['/api/health', '/.netlify/functions/api/health', '/health'], (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
@@ -137,32 +385,74 @@ app.get('/api/health', (req: Request, res: Response) => {
   });
 });
 
+app.get(['/api/admin/status', '/.netlify/functions/api/admin/status', '/admin/status'], (req: Request, res: Response) => {
+  res.json({
+    status: 'ok',
+    service: 'Digital Product Sheba Admin API',
+    runtime: process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME ? 'netlify-function' : 'standalone-node',
+    firebaseAdmin: {
+      configured: adminStatus.configured,
+      initialized: adminStatus.initialized,
+      projectId: adminStatus.projectId,
+      maskedClientEmail: adminStatus.maskedClientEmail,
+      error: adminStatus.error,
+    },
+    collectionsSupported: ALL_BACKUP_COLLECTIONS.length,
+    timestamp: new Date().toISOString(),
+  });
+});
+
 // ==========================================
 // ADMIN DATABASE BACKUP, RESTORE & FORMAT
 // ==========================================
-app.post('/api/admin/backup', async (req: Request, res: Response) => {
+const handleAdminBackup = async (req: Request, res: Response) => {
   try {
-    const adminAuth = await authenticateAdminToken(req);
-    if (!adminAuth) {
-      return res.status(403).json({ error: 'Access Denied: Valid administrator authentication required.' });
+    const authResult = await authenticateAdminToken(req);
+    if (!authResult.success) {
+      return res.status(authResult.status).json({
+        success: false,
+        error: authResult.error,
+      });
     }
 
+    if (!adminDb) {
+      return res.status(503).json({
+        success: false,
+        error:
+          adminStatus.error ||
+          'FIREBASE_ADMIN_NOT_CONFIGURED: Privileged database backup requires Firebase Admin SDK. Please configure FIREBASE_SERVICE_ACCOUNT in your Netlify Environment Variables.',
+      });
+    }
+
+    // 1. Explicitly test reading the 'coupons' collection first with Admin Firestore
+    try {
+      await adminDb.collection('coupons').get();
+    } catch (couponErr: any) {
+      console.error('[Admin Backup] Explicit test on "coupons" collection failed:', couponErr?.message || couponErr);
+      return res.status(500).json({
+        success: false,
+        error: `COUPONS_EXPORT_FAILED: Failed to export collection "coupons" via Admin Firestore (${couponErr?.message || couponErr})`,
+      });
+    }
+
+    // 2. Export all 20 collections preserving document IDs, nested maps, arrays, timestamps, numbers and booleans
     const collectionsData: Record<string, Record<string, any>> = {};
     let totalCount = 0;
 
     for (const colName of ALL_BACKUP_COLLECTIONS) {
       collectionsData[colName] = {};
       try {
-        const colRef = collection(serverDb, colName);
-        const snapshot = await getDocs(colRef);
+        const snapshot = await adminDb.collection(colName).get();
         snapshot.forEach((docSnap) => {
-          collectionsData[colName][docSnap.id] = docSnap.data();
+          collectionsData[colName][docSnap.id] = serializeAdminFirestoreData(docSnap.data());
           totalCount++;
         });
       } catch (colErr: any) {
-        // As requested: If a collection is empty or unseeded, include it with count: 0
-        console.warn(`[Admin Backup] Collection "${colName}" empty or unseeded:`, colErr?.message);
-        collectionsData[colName] = {};
+        console.error(`[Admin Backup] Collection "${colName}" export error:`, colErr?.message || colErr);
+        return res.status(500).json({
+          success: false,
+          error: `COLLECTION_EXPORT_FAILED: Failed to export collection "${colName}" (${colErr?.message || colErr})`,
+        });
       }
     }
 
@@ -177,38 +467,41 @@ app.post('/api/admin/backup', async (req: Request, res: Response) => {
     return res.json({ success: true, backup });
   } catch (err: any) {
     console.error('[Admin Backup Error]:', err);
-    return res.status(500).json({ error: 'Failed to generate database backup', details: err?.message || String(err) });
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to generate database backup',
+      details: err?.message || String(err),
+    });
   }
-});
+};
 
-app.post('/api/admin/restore', async (req: Request, res: Response) => {
+app.post(['/api/admin/backup', '/.netlify/functions/api/admin/backup', '/admin/backup'], handleAdminBackup);
+
+const handleAdminRestore = async (req: Request, res: Response) => {
   try {
-    const adminAuth = await authenticateAdminToken(req);
-    if (!adminAuth) {
-      return res.status(403).json({ error: 'Access Denied: Valid administrator authentication required.' });
+    const authResult = await authenticateAdminToken(req);
+    if (!authResult.success) {
+      return res.status(authResult.status).json({
+        success: false,
+        error: authResult.error,
+      });
     }
 
     const { backup } = req.body;
     if (!backup || !backup.collections || typeof backup.collections !== 'object') {
-      return res.status(400).json({ error: 'Invalid backup payload: missing collections object.' });
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid backup payload: missing collections object.',
+      });
     }
 
-    // Ensure administrator record exists in admins collection so security rules always recognize this admin
-    if (adminAuth.uid) {
-      try {
-        await setDoc(
-          doc(serverDb, 'admins', adminAuth.uid),
-          {
-            id: adminAuth.uid,
-            email: adminAuth.email,
-            role: 'admin',
-            updatedAt: new Date().toISOString(),
-          },
-          { merge: true }
-        );
-      } catch (adminSetErr) {
-        console.warn('[Admin Restore] Admin privileges record update:', adminSetErr);
-      }
+    if (!adminDb) {
+      return res.status(503).json({
+        success: false,
+        error:
+          adminStatus.error ||
+          'FIREBASE_ADMIN_NOT_CONFIGURED: Privileged database restore requires Firebase Admin SDK. Please configure FIREBASE_SERVICE_ACCOUNT in your Netlify Environment Variables.',
+      });
     }
 
     let restoredCount = 0;
@@ -219,120 +512,104 @@ app.post('/api/admin/restore', async (req: Request, res: Response) => {
       if (!docsMap || typeof docsMap !== 'object') continue;
 
       const entries = Object.entries(docsMap as Record<string, any>);
-      const CHUNK_SIZE = 5;
+      const CHUNK_SIZE = 25;
 
       for (let i = 0; i < entries.length; i += CHUNK_SIZE) {
         const chunk = entries.slice(i, i + CHUNK_SIZE);
-        await Promise.all(
-          chunk.map(async ([docId, rawData]) => {
-            if (!docId || rawData === undefined) return;
-            try {
-              const docData = { ...rawData };
-              // Protect currently active administrator from being downgraded
-              if (colName === 'users' && docId === adminAuth.uid) {
-                docData.role = 'admin';
-              }
-              await setDoc(doc(serverDb, colName, docId), docData, { merge: true });
-              restoredCount++;
-              restoredByCollection[colName]++;
-            } catch (docErr: any) {
-              console.error(`[Admin Restore Error] Collection ${colName}, doc ${docId}:`, docErr);
-              throw new Error(`Restore failed on ${colName}/${docId}: ${docErr?.message || docErr}`);
-            }
-          })
-        );
+        const batch = adminDb.batch();
+
+        for (const [docId, rawData] of chunk) {
+          if (!docId || rawData === undefined) continue;
+          const ref = adminDb.collection(colName).doc(docId);
+          batch.set(ref, deserializeAdminData(rawData), { merge: true });
+          restoredCount++;
+          restoredByCollection[colName] = (restoredByCollection[colName] || 0) + 1;
+        }
+
+        await batch.commit();
       }
     }
 
     return res.json({ success: true, restoredCount, restoredByCollection });
   } catch (err: any) {
     console.error('[Admin Restore Exception]:', err);
-    return res.status(500).json({ error: err?.message || 'Failed to restore backup' });
+    return res.status(500).json({
+      success: false,
+      error: err?.message || 'Failed to restore backup',
+    });
   }
-});
+};
 
-app.post('/api/admin/format', async (req: Request, res: Response) => {
+app.post(['/api/admin/restore', '/.netlify/functions/api/admin/restore', '/admin/restore'], handleAdminRestore);
+
+const handleAdminFormat = async (req: Request, res: Response) => {
   try {
-    const adminAuth = await authenticateAdminToken(req);
-    if (!adminAuth) {
-      return res.status(403).json({ error: 'Access Denied: Valid administrator authentication required.' });
+    const authResult = await authenticateAdminToken(req);
+    if (!authResult.success) {
+      return res.status(authResult.status).json({
+        success: false,
+        error: authResult.error,
+      });
     }
 
     const { confirmText } = req.body;
     if (confirmText !== 'DELETE') {
-      return res.status(400).json({ error: 'Please provide confirmText="DELETE" to confirm formatting.' });
+      return res.status(400).json({
+        success: false,
+        error: 'Please provide confirmText="DELETE" to confirm formatting.',
+      });
+    }
+
+    if (!adminDb) {
+      return res.status(503).json({
+        success: false,
+        error:
+          adminStatus.error ||
+          'FIREBASE_ADMIN_NOT_CONFIGURED: Privileged database format requires Firebase Admin SDK. Please configure FIREBASE_SERVICE_ACCOUNT in your Netlify Environment Variables.',
+      });
     }
 
     let deletedCount = 0;
     const deletedByCollection: Record<string, number> = {};
 
-    // 1. Delete business collections
     for (const colName of BUSINESS_DATA_COLLECTIONS) {
       deletedByCollection[colName] = 0;
-      try {
-        const colRef = collection(serverDb, colName);
-        const snapshot = await getDocs(colRef);
-        const docsToDelete = snapshot.docs;
-        const CHUNK_SIZE = 5;
-
-        for (let i = 0; i < docsToDelete.length; i += CHUNK_SIZE) {
-          const chunk = docsToDelete.slice(i, i + CHUNK_SIZE);
-          await Promise.all(
-            chunk.map(async (d) => {
-              try {
-                await deleteDoc(d.ref);
-                deletedCount++;
-                deletedByCollection[colName]++;
-              } catch (delErr) {
-                console.warn(`Failed to delete doc ${d.id} in ${colName}:`, delErr);
-              }
-            })
-          );
-        }
-      } catch (colErr) {
-        console.warn(`[Format] Collection ${colName} read/delete warning:`, colErr);
-      }
-    }
-
-    // 2. Wipe non-admin users, STRICTLY PRESERVING admin accounts and currentAdminUid!
-    try {
-      deletedByCollection['users'] = 0;
-      const usersRef = collection(serverDb, 'users');
-      const userSnap = await getDocs(usersRef);
-
-      const customersToDelete = userSnap.docs.filter((d) => {
-        const uData = d.data();
-        if (d.id === adminAuth.uid) return false;
-        if (uData.role === 'admin') return false;
-        if (uData.email === 'shahinpc2018@gmail.com') return false;
-        return true;
+      const snapshot = await adminDb.collection(colName).get();
+      const batch = adminDb.batch();
+      snapshot.forEach((d) => {
+        batch.delete(d.ref);
+        deletedCount++;
+        deletedByCollection[colName]++;
       });
-
-      const CHUNK_SIZE = 5;
-      for (let i = 0; i < customersToDelete.length; i += CHUNK_SIZE) {
-        const chunk = customersToDelete.slice(i, i + CHUNK_SIZE);
-        await Promise.all(
-          chunk.map(async (d) => {
-            try {
-              await deleteDoc(d.ref);
-              deletedCount++;
-              deletedByCollection['users']++;
-            } catch (delErr) {
-              console.warn(`Failed to delete customer ${d.id}:`, delErr);
-            }
-          })
-        );
-      }
-    } catch (usersErr) {
-      console.warn('[Format] Customers delete warning:', usersErr);
+      await batch.commit();
     }
+
+    // Customer users deletion strictly preserving admin accounts and current admin
+    const usersSnap = await adminDb.collection('users').get();
+    const userBatch = adminDb.batch();
+    deletedByCollection['users'] = 0;
+    usersSnap.forEach((d) => {
+      const u = d.data();
+      if (d.id !== authResult.uid && u.role !== 'admin') {
+        userBatch.delete(d.ref);
+        deletedCount++;
+        deletedByCollection['users']++;
+      }
+    });
+    await userBatch.commit();
 
     return res.json({ success: true, deletedCount, deletedByCollection });
   } catch (err: any) {
     console.error('[Admin Format Error]:', err);
-    return res.status(500).json({ error: 'Failed to format business data', details: err?.message || String(err) });
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to format business data',
+      details: err?.message || String(err),
+    });
   }
-});
+};
+
+app.post(['/api/admin/format', '/.netlify/functions/api/admin/format', '/admin/format'], handleAdminFormat);
 
 // ==========================================
 // 2. EMAIL & WHATSAPP NOTIFICATION DISPATCH
@@ -705,4 +982,10 @@ async function startServer() {
   });
 }
 
-startServer();
+const isMain = process.argv[1] && (process.argv[1].endsWith('server.ts') || process.argv[1].endsWith('server.cjs'));
+if (isMain && !process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  startServer();
+}
+
+export { app };
+export default app;

@@ -30,6 +30,7 @@ export const BACKUP_COLLECTIONS = [
   'accounts',
   'transactions',
   'cashTransactions',
+  'categories',
 ] as const;
 
 // Collections to wipe when formatting business data
@@ -38,6 +39,7 @@ export const BUSINESS_DATA_COLLECTIONS = [
   'orders',
   'deliveries',
   'complaints',
+  'categories',
   'coupons',
   'sales',
   'purchases',
@@ -149,7 +151,7 @@ export async function generateFullDatabaseBackup(
       });
     } catch (err: any) {
       console.error(`Collection "${colName}" read failed:`, err);
-      throw new Error(`Backup incomplete: Failed to export collection "${colName}". Error: ${err?.message || err}`);
+      throw new Error(`CLIENT_FIRESTORE_FALLBACK_FAILED: Backup incomplete: Failed to export collection "${colName}". Error: ${err?.message || err}`);
     }
   }
 

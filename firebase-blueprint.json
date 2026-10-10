@@ -163,9 +163,30 @@
         "id": { "type": "string", "description": "Record ID" },
         "createdAt": { "type": "string", "description": "Creation timestamp" }
       }
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product category definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique category identifier" },
+        "name": { "type": "string", "description": "Category display name" },
+        "slug": { "type": "string", "description": "URL-friendly slug" },
+        "description": { "type": "string", "description": "Optional category description" },
+        "imageUrl": { "type": "string", "description": "Optional image URL" },
+        "isActive": { "type": "boolean", "description": "Active visibility flag" },
+        "sortOrder": { "type": "number", "description": "Sort order priority" },
+        "createdAt": { "type": "string", "description": "Creation timestamp" },
+        "updatedAt": { "type": "string", "description": "Update timestamp" }
+      },
+      "required": ["id", "name", "slug", "isActive"]
     }
   },
   "firestore": {
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Product category documents"
+    },
     "/admins/{adminId}": {
       "schema": "Admin",
       "description": "Admin authorization mapping documents"

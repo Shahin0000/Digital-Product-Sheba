@@ -18,10 +18,7 @@ import {
   BackupFileStructure,
 } from '../types';
 import {
-  generateFullDatabaseBackup,
   downloadBackupFile,
-  formatAllBusinessData,
-  restoreBackupToFirestore,
 } from '../utils/backupRestore';
 import {
   initialCategories,
@@ -2216,107 +2213,122 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error('Unauthorized');
     }
 
-    try {
-      // 1. Primary Architecture: Secure server-side Admin endpoint with verified ID Token
-      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
-      if (idToken) {
-        const res = await fetch('/api/admin/backup', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${idToken}`,
-          },
-        });
-        if (res.ok) {
-          const resData = await res.json();
-          if (resData.success && resData.backup) {
-            downloadBackupFile(resData.backup);
-            showToast(
-              lang === 'bn'
-                ? `ব্যাকআপ ফাইল সফলভাবে ডাউনলোড হয়েছে (${resData.backup.totalDocuments} ডকুমেন্টস)`
-                : `Backup file generated and downloaded (${resData.backup.totalDocuments} documents)`,
-              'success'
-            );
-            return;
-          }
-        }
-      }
-    } catch (serverErr) {
-      console.warn('[Admin Backup API] Server endpoint fallback to direct SDK:', serverErr);
+    const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+    if (!idToken) {
+      const msg = 'SERVER_BACKUP_FAILED: No active Firebase Auth ID token found. Please sign in as admin.';
+      console.error('[BACKUP DEBUG]', {
+        currentUserUid: currentUser?.id,
+        idTokenExists: false,
+        apiUrl: '/api/admin/backup',
+        httpStatus: null,
+        responseBody: null,
+        apiSucceeded: false,
+        fallbackTriggered: false,
+      });
+      showToast(msg, 'error');
+      throw new Error(msg);
     }
 
-    // 2. Client-side SDK fallback
-    const { backup, totalCount } = await generateFullDatabaseBackup(
-      siteSettings.businessName || siteSettings.siteName
-    );
-    downloadBackupFile(backup);
-    showToast(
-      lang === 'bn'
-        ? `ব্যাকআপ ফাইল সফলভাবে ডাউনলোড হয়েছে (${totalCount} ডকুমেন্টস)`
-        : `Backup file generated and downloaded (${totalCount} documents)`,
-      'success'
-    );
+    try {
+      const res = await fetch('/api/admin/backup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+
+      const resData = await res.json().catch(() => ({}));
+
+      console.log('[BACKUP DEBUG]', {
+        currentUserUid: currentUser?.id,
+        idTokenExists: true,
+        apiUrl: '/api/admin/backup',
+        httpStatus: res.status,
+        responseBody: resData,
+        apiSucceeded: res.ok && resData?.success === true,
+        fallbackTriggered: false,
+      });
+
+      if (!res.ok || !resData?.success || !resData?.backup) {
+        const errorDetail = resData?.error || `HTTP ${res.status} ${res.statusText}`;
+        const finalError = `SERVER_BACKUP_FAILED: ${errorDetail}`;
+        showToast(finalError, 'error');
+        throw new Error(finalError);
+      }
+
+      downloadBackupFile(resData.backup);
+      showToast(
+        lang === 'bn'
+          ? `ব্যাকআপ ফাইল সফলভাবে ডাউনলোড হয়েছে (${resData.backup.totalDocuments} ডকুমেন্টস)`
+          : `Backup file generated and downloaded (${resData.backup.totalDocuments} documents)`,
+        'success'
+      );
+    } catch (serverErr: any) {
+      if (serverErr.message?.startsWith('SERVER_BACKUP_FAILED')) {
+        throw serverErr;
+      }
+      const wrappedError = `SERVER_BACKUP_FAILED: ${serverErr?.message || serverErr}`;
+      console.error('[BACKUP DEBUG] Exception caught:', wrappedError);
+      showToast(wrappedError, 'error');
+      throw new Error(wrappedError);
+    }
   };
 
   const formatAllData = async (): Promise<{ deletedCount: number }> => {
     if (!currentUser || currentUser.role !== 'admin') {
       showToast(lang === 'bn' ? 'শুধুমাত্র অ্যাডমিন ডেটা রিসেট করতে পারবেন' : 'Admin access required', 'error');
-      throw new Error('Unauthorized');
+      throw new Error('SERVER_FORMAT_FAILED: Admin access required');
+    }
+
+    const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+    if (!idToken) {
+      const msg = 'SERVER_FORMAT_FAILED: No active Firebase Auth ID token found. Please sign in as admin.';
+      showToast(msg, 'error');
+      throw new Error(msg);
     }
 
     try {
-      // 1. Primary Architecture: Secure server-side endpoint with verified ID Token
-      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
-      if (idToken) {
-        const res = await fetch('/api/admin/format', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({ confirmText: 'DELETE' }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.success) {
-            if (typeof window !== 'undefined') {
-              localStorage.setItem('minarul_db_formatted', 'true');
-            }
-            setProducts([]);
-            setOrders([]);
-            setDeliveries({});
-            setComplaints([]);
-            showToast(
-              lang === 'bn'
-                ? `সমস্ত ব্যবসায়িক ডেটা সফলভাবে ফরম্যাট করা হয়েছে (${data.deletedCount} ডকুমেন্টস মুছে ফেলা হয়েছে)`
-                : `All business data formatted successfully (${data.deletedCount} documents deleted)`,
-              'success'
-            );
-            return { deletedCount: data.deletedCount };
-          }
-        }
-      }
-    } catch (serverErr) {
-      console.warn('[Admin Format API] Server endpoint fallback to direct SDK:', serverErr);
-    }
+      const res = await fetch('/api/admin/format', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ confirmText: 'DELETE' }),
+      });
 
-    // 2. Client-side SDK fallback
-    const adminUid = auth.currentUser?.uid || currentUser.id;
-    const res = await formatAllBusinessData(adminUid);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('minarul_db_formatted', 'true');
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok || !data?.success) {
+        const errorDetail = data?.error || `HTTP ${res.status} ${res.statusText}`;
+        const finalError = `SERVER_FORMAT_FAILED: ${errorDetail}`;
+        showToast(finalError, 'error');
+        throw new Error(finalError);
+      }
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('minarul_db_formatted', 'true');
+      }
+      setProducts([]);
+      setOrders([]);
+      setDeliveries({});
+      setComplaints([]);
+      showToast(
+        lang === 'bn'
+          ? `সমস্ত ব্যবসায়িক ডেটা সফলভাবে ফরম্যাট করা হয়েছে (${data.deletedCount} ডকুমেন্টস মুছে ফেলা হয়েছে)`
+          : `All business data formatted successfully (${data.deletedCount} documents deleted)`,
+        'success'
+      );
+      return { deletedCount: data.deletedCount };
+    } catch (serverErr: any) {
+      if (serverErr.message?.startsWith('SERVER_FORMAT_FAILED')) {
+        throw serverErr;
+      }
+      const wrappedError = `SERVER_FORMAT_FAILED: ${serverErr?.message || serverErr}`;
+      showToast(wrappedError, 'error');
+      throw new Error(wrappedError);
     }
-    setProducts([]);
-    setOrders([]);
-    setDeliveries({});
-    setComplaints([]);
-    showToast(
-      lang === 'bn'
-        ? `সমস্ত ব্যবসায়িক ডেটা সফলভাবে ফরম্যাট করা হয়েছে (${res.deletedCount} ডকুমেন্টস মুছে ফেলা হয়েছে)`
-        : `All business data formatted successfully (${res.deletedCount} documents deleted)`,
-      'success'
-    );
-    return res;
   };
 
   const restoreAllData = async (
@@ -2325,59 +2337,59 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   ): Promise<{ restoredCount: number }> => {
     if (!currentUser || currentUser.role !== 'admin') {
       showToast(lang === 'bn' ? 'শুধুমাত্র অ্যাডমিন ডেটা রিস্টোর করতে পারবেন' : 'Admin access required', 'error');
-      throw new Error('Unauthorized');
+      throw new Error('SERVER_RESTORE_FAILED: Admin access required');
+    }
+
+    const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
+    if (!idToken) {
+      const msg = 'SERVER_RESTORE_FAILED: No active Firebase Auth ID token found. Please sign in as admin.';
+      showToast(msg, 'error');
+      throw new Error(msg);
     }
 
     try {
-      // 1. Primary Architecture: Secure server-side endpoint with verified ID Token
-      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
-      if (idToken) {
-        if (onProgress) {
-          onProgress({ current: 1, total: backup.totalDocuments || 10, collection: 'server-processing' });
-        }
-        const res = await fetch('/api/admin/restore', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${idToken}`,
-          },
-          body: JSON.stringify({ backup }),
-        });
-        if (res.ok) {
-          const resData = await res.json();
-          if (resData.success) {
-            if (typeof window !== 'undefined') {
-              localStorage.removeItem('minarul_db_formatted');
-            }
-            if (onProgress) {
-              onProgress({ current: resData.restoredCount, total: resData.restoredCount, collection: 'complete' });
-            }
-            showToast(
-              lang === 'bn'
-                ? `ডেটা সফলভাবে রিস্টোর হয়েছে (${resData.restoredCount} ডকুমেন্টস)`
-                : `Data restored successfully (${resData.restoredCount} documents)`,
-              'success'
-            );
-            return { restoredCount: resData.restoredCount };
-          }
-        }
+      if (onProgress) {
+        onProgress({ current: 1, total: backup.totalDocuments || 10, collection: 'server-processing' });
       }
-    } catch (serverErr) {
-      console.warn('[Admin Restore API] Server endpoint fallback to direct SDK:', serverErr);
-    }
+      const res = await fetch('/api/admin/restore', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ backup }),
+      });
 
-    // 2. Client-side SDK fallback
-    const res = await restoreBackupToFirestore(backup, onProgress);
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem('minarul_db_formatted');
+      const resData = await res.json().catch(() => ({}));
+
+      if (!res.ok || !resData?.success) {
+        const errorDetail = resData?.error || `HTTP ${res.status} ${res.statusText}`;
+        const finalError = `SERVER_RESTORE_FAILED: ${errorDetail}`;
+        showToast(finalError, 'error');
+        throw new Error(finalError);
+      }
+
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('minarul_db_formatted');
+      }
+      if (onProgress) {
+        onProgress({ current: resData.restoredCount, total: resData.restoredCount, collection: 'complete' });
+      }
+      showToast(
+        lang === 'bn'
+          ? `ডেটা সফলভাবে রিস্টোর হয়েছে (${resData.restoredCount} ডকুমেন্টস)`
+          : `Data restored successfully (${resData.restoredCount} documents)`,
+        'success'
+      );
+      return { restoredCount: resData.restoredCount };
+    } catch (serverErr: any) {
+      if (serverErr.message?.startsWith('SERVER_RESTORE_FAILED')) {
+        throw serverErr;
+      }
+      const wrappedError = `SERVER_RESTORE_FAILED: ${serverErr?.message || serverErr}`;
+      showToast(wrappedError, 'error');
+      throw new Error(wrappedError);
     }
-    showToast(
-      lang === 'bn'
-        ? `ডেটা সফলভাবে রিস্টোর হয়েছে (${res.restoredCount} ডকুমেন্টস)`
-        : `Data restored successfully (${res.restoredCount} documents)`,
-      'success'
-    );
-    return res;
   };
 
   return (

@@ -115,13 +115,19 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 9. Coupons collection (Public read for checkout discounts, admin-only management)
+    // 9. Categories collection (Public read for active store categories, admin-only management)
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(categoryId) && isAdmin();
+    }
+
+    // 10. Coupons collection (Public read for checkout discounts, admin-only management)
     match /coupons/{couponId} {
       allow read: if true;
       allow create, update, delete: if isValidId(couponId) && isAdmin();
     }
 
-    // 10. Business & accounting collections (Admin-only full access)
+    // 11. Business & accounting collections (Admin-only full access)
     match /sales/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /purchases/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /suppliers/{id} { allow read, write: if isValidId(id) && isAdmin(); }
@@ -134,7 +140,7 @@ service cloud.firestore {
     match /transactions/{id} { allow read, write: if isValidId(id) && isAdmin(); }
     match /cashTransactions/{id} { allow read, write: if isValidId(id) && isAdmin(); }
 
-    // 11. Final Wildcard Deny Safety Net: explicitly block all other unspecified paths
+    // 12. Final Wildcard Deny Safety Net: explicitly block all other unspecified paths
     match /{document=**} {
       allow read, write: if false;
     }

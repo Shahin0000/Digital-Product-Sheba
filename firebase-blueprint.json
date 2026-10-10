@@ -262,6 +262,10 @@
     "/cashTransactions/{id}": {
       "schema": "GenericBusinessDoc",
       "description": "Cash transaction records"
+    },
+    "/categories/{id}": {
+      "schema": "Category",
+      "description": "Product categories"
     }
   }
 }

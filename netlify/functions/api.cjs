@@ -2,78 +2,144 @@ const serverless = require('serverless-http');
 const path = require('path');
 const fs = require('fs');
 
-// Dynamically load bundled server from Netlify Function folder or dist directory
-let app;
-let lastLoadError = null;
-
-// Primary direct require from the same directory where Netlify bundles/places server.cjs
+// Reference firebase-admin so Netlify's bundler analyzer reliably includes it in runtime package
 try {
-  const mod = require('./server.cjs');
-  app = mod.app || mod.default || mod;
-} catch (e1) {
-  lastLoadError = e1;
-  // Fallback to explicit absolute path candidates
+  require('firebase-admin');
+} catch (_) {}
+
+let app = null;
+let serverlessHandler = null;
+let loadDiagnostics = {
+  lastError: null,
+  attemptedCandidates: [],
+  successfulCandidate: null,
+};
+
+function loadApp() {
+  if (app && serverlessHandler) return serverlessHandler;
+
   const candidatePaths = [
+    // 1. Direct local file relative to executing directory
     path.join(__dirname, 'server.cjs'),
-    path.join(__dirname, '../server.cjs'),
-    path.join(__dirname, '../../dist/server.cjs'),
-    path.join(__dirname, '../dist/server.cjs'),
-    path.join(process.cwd(), 'netlify/functions/server.cjs'),
-    path.join(process.cwd(), 'dist/server.cjs'),
+    // 2. Included file relative to Lambda task root
+    path.join(__dirname, 'dist', 'server.cjs'),
+    path.join(__dirname, 'netlify', 'functions', 'server.cjs'),
+    // 3. Current working directory variants
+    path.join(process.cwd(), 'netlify', 'functions', 'server.cjs'),
+    path.join(process.cwd(), 'dist', 'server.cjs'),
+    path.join(process.cwd(), 'server.cjs'),
+    // 4. Upward directory traversals
+    path.join(__dirname, '..', 'server.cjs'),
+    path.join(__dirname, '..', 'dist', 'server.cjs'),
+    path.join(__dirname, '..', '..', 'dist', 'server.cjs'),
+    // 5. AWS Lambda standard task root
+    '/var/task/netlify/functions/server.cjs',
+    '/var/task/dist/server.cjs',
+    '/var/task/server.cjs',
   ];
 
+  // Also include direct relative require
+  try {
+    const mod = require('./server.cjs');
+    const candidateApp = mod.app || mod.default || mod;
+    if (candidateApp && typeof candidateApp === 'function') {
+      app = candidateApp;
+      loadDiagnostics.successfulCandidate = './server.cjs (direct require)';
+      serverlessHandler = serverless(app);
+      return serverlessHandler;
+    }
+  } catch (err) {
+    loadDiagnostics.attemptedCandidates.push({
+      path: './server.cjs (direct require)',
+      exists: true,
+      error: err ? err.message : 'Unknown error',
+    });
+  }
+
   for (const candidate of candidatePaths) {
+    let exists = false;
     try {
-      if (fs.existsSync(candidate)) {
+      exists = fs.existsSync(candidate);
+    } catch (_) {}
+
+    if (exists) {
+      try {
         const mod = require(candidate);
-        app = mod.app || mod.default || mod;
-        if (app) break;
+        const candidateApp = mod.app || mod.default || mod;
+        if (candidateApp && typeof candidateApp === 'function') {
+          app = candidateApp;
+          loadDiagnostics.successfulCandidate = candidate;
+          serverlessHandler = serverless(app);
+          return serverlessHandler;
+        }
+      } catch (err) {
+        loadDiagnostics.lastError = err;
+        loadDiagnostics.attemptedCandidates.push({
+          path: candidate,
+          exists: true,
+          error: err ? err.message : 'Load failed',
+        });
       }
-    } catch (err) {
-      lastLoadError = err;
-      console.warn('[Netlify Function api.cjs] Failed loading candidate:', candidate, err.message);
+    } else {
+      loadDiagnostics.attemptedCandidates.push({
+        path: candidate,
+        exists: false,
+        error: 'File does not exist',
+      });
     }
   }
+
+  return null;
 }
 
-let serverlessHandler = null;
-if (app) {
-  try {
-    serverlessHandler = serverless(app);
-  } catch (shErr) {
-    console.error('[Netlify Function api.cjs] Error wrapping Express app with serverless-http:', shErr);
-  }
-}
+// Initial bootstrap attempt
+loadApp();
 
 exports.handler = async (event, context) => {
-  if (serverlessHandler) {
-    return serverlessHandler(event, context);
+  // Ensure handler is ready
+  const handler = serverlessHandler || loadApp();
+
+  if (handler) {
+    // Forward to Express application
+    return handler(event, context);
   }
 
-  // If app wasn't loaded at startup, attempt one lazy load retry
-  if (!app) {
-    try {
-      const mod = require('./server.cjs');
-      app = mod.app || mod.default || mod;
-      if (app) {
-        serverlessHandler = serverless(app);
-        return serverlessHandler(event, context);
-      }
-    } catch (retryErr) {
-      lastLoadError = retryErr;
-    }
-  }
+  // Safe file list inspection for diagnostics
+  let filesInDir = [];
+  try {
+    filesInDir = fs.readdirSync(__dirname);
+  } catch (_) {}
+
+  let filesInCwd = [];
+  try {
+    filesInCwd = fs.readdirSync(process.cwd());
+  } catch (_) {}
+
+  const diagnosticPayload = {
+    error: 'SERVER_BUNDLE_NOT_FOUND: Express app bundle could not be loaded in Netlify Function runtime.',
+    details: loadDiagnostics.lastError ? loadDiagnostics.lastError.message : 'No candidate bundle path succeeded',
+    diagnostics: {
+      timestamp: new Date().toISOString(),
+      __dirname: __dirname,
+      cwd: process.cwd(),
+      filesInDirname: filesInDir,
+      filesInCwd: filesInCwd,
+      attemptedCandidates: loadDiagnostics.attemptedCandidates,
+    },
+  };
+
+  console.error('[Netlify Function api.cjs Fatal Error]', JSON.stringify(diagnosticPayload, null, 2));
 
   return {
     statusCode: 500,
     headers: {
       'Content-Type': 'application/json',
       'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, Authorization',
+      'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     },
-    body: JSON.stringify({
-      error: 'SERVER_BUNDLE_NOT_FOUND: Express app bundle could not be loaded in Netlify Function runtime.',
-      details: lastLoadError ? lastLoadError.message : 'Unknown bundle resolution error',
-    }),
+    body: JSON.stringify(diagnosticPayload),
   };
 };
+
 

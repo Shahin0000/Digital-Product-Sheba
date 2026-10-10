@@ -8,6 +8,7 @@
 
 [functions]
   node_bundler = "esbuild"
+  external_node_modules = ["firebase-admin"]
   included_files = ["dist/server.cjs", "netlify/functions/server.cjs", "firebase-applet-config.json"]
 
 [[redirects]]

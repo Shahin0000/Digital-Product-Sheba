@@ -1,7 +1,6 @@
 import express, { Request, Response } from 'express';
 import path from 'path';
 import fs from 'fs';
-import { createServer as createViteServer } from 'vite';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
 import { initializeApp as initAdminApp, cert, applicationDefault, getApps } from 'firebase-admin/app';
@@ -918,7 +917,14 @@ app.post('/api/downloads/generate-url', (req: Request, res: Response) => {
 // ==========================================
 // 4. SECURE DOWNLOAD FILE REDIRECT / STREAM
 // ==========================================
-app.get('/api/downloads/secure/:token', (req: Request, res: Response) => {
+app.get(
+  [
+    '/api/downloads/secure/:token',
+    '/api/download/:token',
+    '/.netlify/functions/api/downloads/secure/:token',
+    '/.netlify/functions/api/download/:token',
+  ],
+  (req: Request, res: Response) => {
   const { token } = req.params;
   const tokenData = activeDownloadTokens.get(token);
 
@@ -964,6 +970,7 @@ app.get('/api/downloads/secure/:token', (req: Request, res: Response) => {
 // ==========================================
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',

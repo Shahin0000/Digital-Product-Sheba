@@ -127,7 +127,10 @@ export const Footer: React.FC = () => {
               {t.allCategories}
             </h5>
             <ul className="space-y-2 text-xs text-gray-400">
-              {categories.slice(1).map((cat) => (
+              {categories
+                .slice(1)
+                .filter((cat) => cat.isActive !== false)
+                .map((cat) => (
                 <li key={cat.id}>
                   <button
                     onClick={() => {

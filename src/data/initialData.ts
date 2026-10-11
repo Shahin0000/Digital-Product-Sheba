@@ -1,12 +1,12 @@
 import { Category, Product, SiteSettings, Coupon, Order, User } from '../types';
 
 export const initialCategories: Category[] = [
-  { id: 'all', nameEn: 'All Products', nameBn: 'সব প্রোডাক্ট', iconName: 'Sparkles', badgeColor: 'bg-indigo-500' },
-  { id: 'ai-tools', nameEn: 'AI Tools', nameBn: 'এআই টুলস', iconName: 'Bot', badgeColor: 'bg-emerald-500' },
-  { id: 'streaming', nameEn: 'OTT & Streaming', nameBn: 'ওটিটি ও স্ট্রিমিং', iconName: 'Tv', badgeColor: 'bg-rose-500' },
-  { id: 'design-dev', nameEn: 'Design & Dev', nameBn: 'ডিজাইন ও ডেভ', iconName: 'Palette', badgeColor: 'bg-amber-500' },
-  { id: 'software-os', nameEn: 'Windows & Office', nameBn: 'উইন্ডোজ ও অফিস', iconName: 'Laptop', badgeColor: 'bg-blue-500' },
-  { id: 'vpn-security', nameEn: 'VPN & Security', nameBn: 'ভিপিএন ও সিকিউরিটি', iconName: 'ShieldCheck', badgeColor: 'bg-purple-500' },
+  { id: 'all', name: 'All Products', nameEn: 'All Products', nameBn: 'সব প্রোডাক্ট', slug: 'all', iconName: 'Sparkles', badgeColor: 'bg-indigo-500', isActive: true, sortOrder: 0 },
+  { id: 'ai-tools', name: 'AI Tools', nameEn: 'AI Tools', nameBn: 'এআই টুলস', slug: 'ai-tools', iconName: 'Bot', badgeColor: 'bg-emerald-500', isActive: true, sortOrder: 1, description: 'ChatGPT, Midjourney, Claude, Gemini & Top AI generation tools' },
+  { id: 'streaming', name: 'OTT & Streaming', nameEn: 'OTT & Streaming', nameBn: 'ওটিটি ও স্ট্রিমিং', slug: 'streaming', iconName: 'Tv', badgeColor: 'bg-rose-500', isActive: true, sortOrder: 2, description: 'Netflix, Prime Video, Spotify, Disney+ & Entertainment subscriptions' },
+  { id: 'design-dev', name: 'Design & Dev', nameEn: 'Design & Dev', nameBn: 'ডিজাইন ও ডেভ', slug: 'design-dev', iconName: 'Palette', badgeColor: 'bg-amber-500', isActive: true, sortOrder: 3, description: 'Canva Pro, Figma, Freepik, Adobe Creative Cloud & UI/UX resources' },
+  { id: 'software-os', name: 'Windows & Office', nameEn: 'Windows & Office', nameBn: 'উইন্ডোজ ও অফিস', slug: 'software-os', iconName: 'Laptop', badgeColor: 'bg-blue-500', isActive: true, sortOrder: 4, description: 'Genuine Windows 10/11 Pro keys, Office 365, Antivirus software' },
+  { id: 'vpn-security', name: 'VPN & Security', nameEn: 'VPN & Security', nameBn: 'ভিপিএন ও সিকিউরিটি', slug: 'vpn-security', iconName: 'ShieldCheck', badgeColor: 'bg-purple-500', isActive: true, sortOrder: 5, description: 'NordVPN, ExpressVPN, Surfshark & cyber security tools' },
 ];
 
 export const initialProducts: Product[] = [

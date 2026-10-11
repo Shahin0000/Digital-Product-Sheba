@@ -170,8 +170,10 @@ export const HeroSection: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 overflow-x-auto pb-2 scrollbar-none">
-            {categories.map((cat) => {
-              const isSelected = selectedCategory === cat.id;
+            {categories
+              .filter((cat) => cat.id === 'all' || cat.isActive !== false)
+              .map((cat) => {
+                const isSelected = selectedCategory === cat.id;
               return (
                 <button
                   key={cat.id}

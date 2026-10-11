@@ -61,6 +61,9 @@ interface StoreContextType {
   updateProduct: (productId: string, updatedProduct: Partial<Product>) => Promise<void>;
   deleteProduct: (productId: string) => Promise<void>;
   categories: Category[];
+  addCategory: (categoryData: Partial<Category> & { nameEn: string; nameBn: string }) => Promise<Category>;
+  updateCategory: (categoryId: string, categoryData: Partial<Category>) => Promise<void>;
+  deleteCategory: (categoryId: string) => Promise<void>;
   selectedCategory: string;
   setSelectedCategory: (catId: string) => void;
   searchQuery: string;
@@ -207,8 +210,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [products, setProducts] = useState<Product[]>([]);
   const [productsLoading, setProductsLoading] = useState<boolean>(true);
 
-  // Categories
-  const categories = initialCategories;
+  // Categories State synced with Cloud Firestore
+  const [categories, setCategories] = useState<Category[]>(initialCategories);
+  const [categoriesLoading, setCategoriesLoading] = useState<boolean>(true);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [sortBy, setSortBy] = useState<'featured' | 'price-asc' | 'price-desc' | 'popular'>('featured');
@@ -441,6 +445,176 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       showToast(t.productDeleted, 'info');
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `products/${productId}`);
+    }
+  };
+
+  // ----------------------------------------------------
+  // 2b. SYNC CATEGORIES FROM FIRESTORE
+  // ----------------------------------------------------
+  useEffect(() => {
+    const categoriesColRef = collection(db, 'categories');
+
+    const unsubscribe = onSnapshot(
+      categoriesColRef,
+      (snapshot) => {
+        if (snapshot.empty) {
+          if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+            setCategories([initialCategories[0]]); // keep "All Products" filter
+          } else {
+            setCategories(initialCategories);
+          }
+          setCategoriesLoading(false);
+        } else {
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem('minarul_db_formatted');
+          }
+          const loadedCategories: Category[] = [];
+          snapshot.forEach((docSnap) => {
+            const data = docSnap.data() as Partial<Category>;
+            const nameEn = data.nameEn || data.name || docSnap.id;
+            const nameBn = data.nameBn || data.nameEn || data.name || docSnap.id;
+            const slug = data.slug || docSnap.id;
+            loadedCategories.push({
+              id: docSnap.id,
+              name: data.name || nameEn,
+              nameEn,
+              nameBn,
+              slug,
+              description: data.description || '',
+              descriptionEn: data.descriptionEn || data.description || '',
+              descriptionBn: data.descriptionBn || data.description || '',
+              imageUrl: data.imageUrl || '',
+              iconName: data.iconName || 'Sparkles',
+              badgeColor: data.badgeColor || 'bg-emerald-500',
+              isActive: data.isActive !== false,
+              sortOrder: typeof data.sortOrder === 'number' ? data.sortOrder : 99,
+              createdAt: data.createdAt,
+              updatedAt: data.updatedAt,
+            });
+          });
+
+          // Always ensure the special "all" virtual tab exists at the top
+          const hasAll = loadedCategories.some((c) => c.id === 'all');
+          let combined = loadedCategories;
+          if (!hasAll) {
+            combined = [initialCategories[0], ...loadedCategories];
+          }
+
+          // Sort by sortOrder ascending
+          combined.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+          setCategories(combined);
+          setCategoriesLoading(false);
+        }
+      },
+      (error) => {
+        console.error('Categories listener error:', error);
+        if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+          setCategories([initialCategories[0]]);
+        } else {
+          setCategories(initialCategories);
+        }
+        setCategoriesLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  const addCategory = async (
+    categoryData: Partial<Category> & { nameEn: string; nameBn: string }
+  ): Promise<Category> => {
+    // Generate clean slug from name or custom slug
+    const rawSlug = (categoryData.slug || categoryData.id || categoryData.nameEn || '')
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
+    const catId = rawSlug || `cat-${Date.now()}`;
+
+    const newCat: Category = {
+      id: catId,
+      name: categoryData.name || categoryData.nameEn,
+      nameEn: categoryData.nameEn.trim(),
+      nameBn: categoryData.nameBn.trim(),
+      slug: catId,
+      description: categoryData.description?.trim() || '',
+      descriptionEn: categoryData.descriptionEn?.trim() || categoryData.description?.trim() || '',
+      descriptionBn: categoryData.descriptionBn?.trim() || categoryData.description?.trim() || '',
+      imageUrl: categoryData.imageUrl?.trim() || '',
+      iconName: categoryData.iconName || 'Sparkles',
+      badgeColor: categoryData.badgeColor || 'bg-emerald-500',
+      isActive: categoryData.isActive !== false,
+      sortOrder: typeof categoryData.sortOrder === 'number' ? categoryData.sortOrder : categories.length,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    try {
+      console.log('FIRESTORE WRITE START (create category):', catId);
+      const cleanData = sanitizeForFirestore(newCat);
+      await setDoc(doc(db, 'categories', catId), cleanData);
+      console.log('FIRESTORE WRITE SUCCESS (create category):', catId);
+
+      // Instant optimistic local state update
+      setCategories((prev) => {
+        const without = prev.filter((c) => c.id !== catId);
+        const next = [...without, newCat];
+        next.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+        return next;
+      });
+
+      showToast(t.categorySaved, 'success');
+      return newCat;
+    } catch (error) {
+      console.error('FIRESTORE WRITE ERROR (create category):', error);
+      handleFirestoreError(error, OperationType.CREATE, `categories/${catId}`);
+    }
+  };
+
+  const updateCategory = async (categoryId: string, updatedData: Partial<Category>) => {
+    try {
+      console.log('FIRESTORE WRITE START (update category):', categoryId);
+      const patchData = {
+        ...updatedData,
+        updatedAt: new Date().toISOString(),
+      };
+      const cleanData = sanitizeForFirestore(patchData);
+      await updateDoc(doc(db, 'categories', categoryId), cleanData);
+      console.log('FIRESTORE WRITE SUCCESS (update category):', categoryId);
+
+      // Instant local state update
+      setCategories((prev) => {
+        const updated = prev.map((c) => (c.id === categoryId ? { ...c, ...cleanData } : c));
+        updated.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+        return updated;
+      });
+
+      showToast(t.categorySaved, 'success');
+    } catch (error) {
+      console.error('FIRESTORE WRITE ERROR (update category):', error);
+      handleFirestoreError(error, OperationType.UPDATE, `categories/${categoryId}`);
+    }
+  };
+
+  const deleteCategory = async (categoryId: string) => {
+    // Check if any product belongs to this category
+    const associatedProducts = products.filter((p) => p.categoryId === categoryId);
+    if (associatedProducts.length > 0) {
+      const warning = t.categoryHasProductsWarning ||
+        `Cannot delete category: ${associatedProducts.length} product(s) are assigned to it. Please reassign them first.`;
+      showToast(warning, 'error');
+      throw new Error(warning);
+    }
+
+    try {
+      await deleteDoc(doc(db, 'categories', categoryId));
+      setCategories((prev) => prev.filter((c) => c.id !== categoryId));
+      if (selectedCategory === categoryId) {
+        setSelectedCategory('all');
+      }
+      showToast(t.categoryDeleted, 'info');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `categories/${categoryId}`);
     }
   };
 
@@ -818,10 +992,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
               createdAtStr = new Date(raw.createdAt.seconds * 1000).toISOString();
             }
           }
+          const rawStatus = raw.status || 'pending';
+          const effectiveStatus: OrderStatus = rawStatus === 'delivered' ? 'completed' : rawStatus;
+
           loadedOrders.push({
             ...(raw as Order),
             id: docSnap.id,
             orderId: raw.orderId || docSnap.id,
+            status: effectiveStatus,
             createdAt: createdAtStr,
           });
         });
@@ -856,10 +1034,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             createdAtStr = new Date(raw.createdAt.seconds * 1000).toISOString();
           }
         }
+        const rawStatus = raw.status || 'pending';
+        const effectiveStatus: OrderStatus = rawStatus === 'delivered' ? 'completed' : rawStatus;
+
         return {
           ...(raw as Order),
           id: docSnap.id,
           orderId: raw.orderId || docSnap.id,
+          status: effectiveStatus,
           createdAt: createdAtStr,
         };
       }
@@ -1611,14 +1793,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   ) => {
     setIsDeliveringOrder(true);
     try {
-      // 1. Fetch Order (from state or directly from Firestore if not yet cached)
-      let order = orders.find((o) => o.id === orderId);
+      // 1. Fetch Order directly from Firestore first to prevent stale state
       const orderRef = doc(db, 'orders', orderId);
-      if (!order) {
-        const orderSnap = await getDoc(orderRef);
-        if (orderSnap.exists()) {
-          order = { id: orderSnap.id, ...orderSnap.data() } as Order;
-        }
+      const orderSnap = await getDoc(orderRef);
+      let order = orders.find((o) => o.id === orderId);
+      if (orderSnap.exists()) {
+        const firestoreData = orderSnap.data();
+        order = {
+          id: orderSnap.id,
+          ...firestoreData,
+          status: firestoreData.status === 'delivered' ? 'completed' : (firestoreData.status || 'pending'),
+        } as Order;
       }
       if (!order) {
         throw new Error(`Order ${orderId} not found`);
@@ -1735,9 +1920,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         return itemObj;
       });
 
-      // 1. Update Order in Firestore
+      // 1. Update Order in Firestore - strictly preserve existing order status
       const cleanOrderUpdate = sanitizeForFirestore({
-        status: 'delivered',
         deliveredAt: serverTimestamp(),
         digitalDeliveries,
       });
@@ -1808,11 +1992,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await setDoc(deliveryDocRef, cleanDeliveryPayload, { merge: true });
       console.log('DELIVERY FIRESTORE WRITE SUCCESS for order:', orderId);
 
-      // Instant local state update
+      // Instant local state update strictly preserving existing order status
       setOrders((prev) =>
         prev.map((o) =>
           o.id === orderId
-            ? { ...o, status: 'delivered', digitalDeliveries, deliveredAt: new Date().toISOString() }
+            ? { ...o, digitalDeliveries, deliveredAt: new Date().toISOString() }
             : o
         )
       );
@@ -2403,6 +2587,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         updateProduct,
         deleteProduct,
         categories,
+        addCategory,
+        updateCategory,
+        deleteCategory,
         selectedCategory,
         setSelectedCategory,
         searchQuery,

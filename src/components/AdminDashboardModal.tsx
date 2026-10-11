@@ -43,9 +43,12 @@ import {
   Image as ImageIcon,
   AlertOctagon,
   HardDrive,
+  Tag,
+  Layers,
+  FolderTree,
 } from 'lucide-react';
 import { useStore } from '../context/StoreContext';
-import { Order, OrderStatus, Product, User, AdminUser, DeliveryRecord, Complaint, ComplaintStatus } from '../types';
+import { Order, OrderStatus, Product, User, AdminUser, DeliveryRecord, Complaint, ComplaintStatus, Category } from '../types';
 import { AdminProductFormModal } from './AdminProductFormModal';
 import { uploadBrandingImage } from '../utils/imageUpload';
 import { validateBackupFile } from '../utils/backupRestore';
@@ -54,6 +57,7 @@ type AdminTab =
   | 'dashboard'
   | 'users'
   | 'products'
+  | 'categories'
   | 'orders'
   | 'deliveries'
   | 'complaints'
@@ -76,6 +80,9 @@ export const AdminDashboardModal: React.FC = () => {
     isDeliveringOrder,
     products,
     categories,
+    addCategory,
+    updateCategory,
+    deleteCategory,
     deleteProduct,
     updateProduct,
     siteSettings,
@@ -123,6 +130,22 @@ export const AdminDashboardModal: React.FC = () => {
     salePrice: number;
     stockCount: number;
   } | null>(null);
+
+  // Categories Management State
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [categoryToEdit, setCategoryToEdit] = useState<Category | null>(null);
+  const [categorySearch, setCategorySearch] = useState('');
+  const [categoryStatusFilter, setCategoryStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [categoryFormNameEn, setCategoryFormNameEn] = useState('');
+  const [categoryFormNameBn, setCategoryFormNameBn] = useState('');
+  const [categoryFormSlug, setCategoryFormSlug] = useState('');
+  const [categoryFormDesc, setCategoryFormDesc] = useState('');
+  const [categoryFormImageUrl, setCategoryFormImageUrl] = useState('');
+  const [categoryFormIcon, setCategoryFormIcon] = useState('Sparkles');
+  const [categoryFormBadgeColor, setCategoryFormBadgeColor] = useState('bg-emerald-500');
+  const [categoryFormIsActive, setCategoryFormIsActive] = useState(true);
+  const [categoryFormSortOrder, setCategoryFormSortOrder] = useState(0);
+  const [isSubmittingCategory, setIsSubmittingCategory] = useState(false);
 
   // Users Filter & Promotion
   const [userSearch, setUserSearch] = useState('');
@@ -222,12 +245,12 @@ export const AdminDashboardModal: React.FC = () => {
   const totalOrders = orders.length;
   const pendingOrders = orders.filter((o) => o.status === 'pending' || o.status === 'verifying').length;
   const processingOrders = orders.filter((o) => o.status === 'processing').length;
-  const completedOrders = orders.filter((o) => o.status === 'completed').length;
+  const completedOrders = orders.filter((o) => o.status === 'completed' || o.status === 'delivered').length;
   const totalDeliveries = allDeliveries.length;
   const totalComplaints = complaints.length;
   const pendingComplaintsCount = complaints.filter((c) => c.status === 'pending').length;
   const totalSales = orders
-    .filter((o) => o.status === 'completed')
+    .filter((o) => o.status === 'completed' || o.status === 'delivered')
     .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
 
   // Recent 8 Orders
@@ -267,6 +290,8 @@ export const AdminDashboardModal: React.FC = () => {
         ? true
         : orderStatusFilter === 'pending'
         ? o.status === 'pending' || o.status === 'verifying'
+        : orderStatusFilter === 'completed'
+        ? o.status === 'completed' || o.status === 'delivered'
         : o.status === orderStatusFilter;
 
     const q = orderSearch.toLowerCase().trim();
@@ -631,6 +656,138 @@ export const AdminDashboardModal: React.FC = () => {
     }
   };
 
+  // --- CATEGORY MANAGEMENT HANDLERS ---
+  const handleOpenAddCategoryModal = () => {
+    setCategoryToEdit(null);
+    setCategoryFormNameEn('');
+    setCategoryFormNameBn('');
+    setCategoryFormSlug('');
+    setCategoryFormDesc('');
+    setCategoryFormImageUrl('');
+    setCategoryFormIcon('Sparkles');
+    setCategoryFormBadgeColor('bg-emerald-500');
+    setCategoryFormIsActive(true);
+    setCategoryFormSortOrder(categories.length);
+    setIsCategoryModalOpen(true);
+  };
+
+  const handleOpenEditCategoryModal = (cat: Category) => {
+    setCategoryToEdit(cat);
+    setCategoryFormNameEn(cat.nameEn || cat.name || '');
+    setCategoryFormNameBn(cat.nameBn || cat.nameEn || cat.name || '');
+    setCategoryFormSlug(cat.slug || cat.id);
+    setCategoryFormDesc(cat.description || cat.descriptionEn || '');
+    setCategoryFormImageUrl(cat.imageUrl || '');
+    setCategoryFormIcon(cat.iconName || 'Sparkles');
+    setCategoryFormBadgeColor(cat.badgeColor || 'bg-emerald-500');
+    setCategoryFormIsActive(cat.isActive !== false);
+    setCategoryFormSortOrder(cat.sortOrder ?? 0);
+    setIsCategoryModalOpen(true);
+  };
+
+  const handleSaveCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!categoryFormNameEn.trim() || !categoryFormNameBn.trim()) {
+      showToast(
+        lang === 'bn' ? 'ক্যাটাগরির ইংরেজি ও বাংলা নাম দেওয়া আবশ্যক।' : 'English and Bangla names are required.',
+        'error'
+      );
+      return;
+    }
+
+    setIsSubmittingCategory(true);
+    try {
+      const generatedSlug = (categoryFormSlug.trim() || categoryFormNameEn.trim())
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+
+      if (categoryToEdit) {
+        await updateCategory(categoryToEdit.id, {
+          name: categoryFormNameEn.trim(),
+          nameEn: categoryFormNameEn.trim(),
+          nameBn: categoryFormNameBn.trim(),
+          slug: generatedSlug || categoryToEdit.id,
+          description: categoryFormDesc.trim(),
+          descriptionEn: categoryFormDesc.trim(),
+          descriptionBn: categoryFormDesc.trim(),
+          imageUrl: categoryFormImageUrl.trim(),
+          iconName: categoryFormIcon,
+          badgeColor: categoryFormBadgeColor,
+          isActive: categoryFormIsActive,
+          sortOrder: Number(categoryFormSortOrder) || 0,
+        });
+      } else {
+        await addCategory({
+          id: generatedSlug,
+          name: categoryFormNameEn.trim(),
+          nameEn: categoryFormNameEn.trim(),
+          nameBn: categoryFormNameBn.trim(),
+          slug: generatedSlug,
+          description: categoryFormDesc.trim(),
+          descriptionEn: categoryFormDesc.trim(),
+          descriptionBn: categoryFormDesc.trim(),
+          imageUrl: categoryFormImageUrl.trim(),
+          iconName: categoryFormIcon,
+          badgeColor: categoryFormBadgeColor,
+          isActive: categoryFormIsActive,
+          sortOrder: Number(categoryFormSortOrder) || categories.length,
+        });
+      }
+      setIsCategoryModalOpen(false);
+      setCategoryToEdit(null);
+    } catch (err: any) {
+      console.error('Save category error:', err);
+    } finally {
+      setIsSubmittingCategory(false);
+    }
+  };
+
+  const handleDeleteCategory = async (cat: Category) => {
+    if (cat.id === 'all') {
+      showToast(lang === 'bn' ? '"সব প্রোডাক্ট" ফিল্টার মুছে ফেলা যাবে না।' : 'Default "All Products" category cannot be deleted.', 'error');
+      return;
+    }
+
+    const assignedCount = products.filter((p) => p.categoryId === cat.id).length;
+    if (assignedCount > 0) {
+      showToast(
+        lang === 'bn'
+          ? `এই ক্যাটাগরিতে ${assignedCount}টি প্রোডাক্ট আছে। আগে প্রোডাক্ট পরিবর্তন বা মুছে ফেলুন।`
+          : `Cannot delete: ${assignedCount} product(s) are assigned to this category. Reassign them first.`,
+        'error'
+      );
+      return;
+    }
+
+    if (
+      !window.confirm(
+        lang === 'bn'
+          ? `আপনি কি নিশ্চিত যে "${cat.nameBn || cat.nameEn}" ক্যাটাগরিটি মুছে ফেলতে চান?`
+          : `Are you sure you want to permanently delete category "${cat.nameEn}"?`
+      )
+    ) {
+      return;
+    }
+
+    try {
+      await deleteCategory(cat.id);
+    } catch (err: any) {
+      console.error('Delete category error:', err);
+    }
+  };
+
+  const handleToggleCategoryActive = async (cat: Category) => {
+    if (cat.id === 'all') return;
+    try {
+      await updateCategory(cat.id, {
+        isActive: cat.isActive === false,
+      });
+    } catch (err: any) {
+      console.error('Toggle category active error:', err);
+    }
+  };
+
   const handleCopyText = (text: string) => {
     navigator.clipboard.writeText(text);
     showToast(lang === 'bn' ? 'কপি করা হয়েছে!' : 'Copied to clipboard!', 'success');
@@ -727,6 +884,21 @@ export const AdminDashboardModal: React.FC = () => {
               <span>🛍️ Products</span>
               <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
                 {products.length}
+              </span>
+            </button>
+
+            <button
+              onClick={() => setActiveTab('categories')}
+              className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all whitespace-nowrap cursor-pointer ${
+                activeTab === 'categories'
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 font-semibold'
+                  : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800/60'
+              }`}
+            >
+              <Tag className="w-4 h-4 shrink-0" />
+              <span>🏷️ Categories</span>
+              <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">
+                {categories.filter((c) => c.id !== 'all').length}
               </span>
             </button>
 
@@ -1005,7 +1177,7 @@ export const AdminDashboardModal: React.FC = () => {
                               <td className="px-4 py-3">
                                 <span
                                   className={`px-2.5 py-1 rounded-full text-[11px] font-semibold uppercase ${
-                                    order.status === 'completed'
+                                    order.status === 'completed' || order.status === 'delivered'
                                       ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
                                       : order.status === 'processing'
                                       ? 'bg-blue-500/10 text-blue-400 border border-blue-500/30'
@@ -1014,7 +1186,7 @@ export const AdminDashboardModal: React.FC = () => {
                                       : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'
                                   }`}
                                 >
-                                  {order.status}
+                                  {order.status === 'delivered' ? 'completed' : order.status}
                                 </span>
                               </td>
                               <td className="px-4 py-3 text-slate-400 text-[11px]">
@@ -1362,6 +1534,182 @@ export const AdminDashboardModal: React.FC = () => {
             )}
 
             {/* ---------------------------------------------------- */}
+            {/* TAB: CATEGORIES */}
+            {/* ---------------------------------------------------- */}
+            {activeTab === 'categories' && (
+              <div className="space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <h2 className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                      <Tag className="w-5 h-5 text-emerald-400" />
+                      <span>{lang === 'bn' ? 'ক্যাটাগরি ব্যবস্থাপনা' : 'Product Categories Management'}</span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Create, edit, toggle visibility, and organize categories for digital store catalog.
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleOpenAddCategoryModal}
+                      className="flex items-center gap-2 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold shadow-md shadow-emerald-600/30 transition-all cursor-pointer"
+                    >
+                      <Plus className="w-4 h-4" />
+                      <span>{t.addCategory || 'Add Category'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Filters */}
+                <div className="flex flex-col sm:flex-row items-center gap-3">
+                  <div className="relative flex-1 w-full">
+                    <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search categories by name, slug, or description..."
+                      value={categorySearch}
+                      onChange={(e) => setCategorySearch(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 bg-slate-800/80 border border-slate-700/80 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+
+                  <div className="flex items-center gap-1.5 overflow-x-auto w-full sm:w-auto">
+                    {(['all', 'active', 'inactive'] as const).map((filter) => (
+                      <button
+                        key={filter}
+                        onClick={() => setCategoryStatusFilter(filter)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-semibold uppercase transition-all whitespace-nowrap cursor-pointer ${
+                          categoryStatusFilter === filter
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {filter}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Categories Table */}
+                <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs text-slate-300">
+                      <thead className="bg-slate-900/80 text-slate-400 uppercase tracking-wider text-[11px] border-b border-slate-700/60">
+                        <tr>
+                          <th className="px-4 py-3">Category</th>
+                          <th className="px-4 py-3">Slug</th>
+                          <th className="px-4 py-3">Description</th>
+                          <th className="px-4 py-3 text-center">Products</th>
+                          <th className="px-4 py-3 text-center">Sort Order</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-700/40">
+                        {categories
+                          .filter((c) => {
+                            if (c.id === 'all') return false; // Show user-manageable categories
+                            if (categoryStatusFilter === 'active' && c.isActive === false) return false;
+                            if (categoryStatusFilter === 'inactive' && c.isActive !== false) return false;
+                            if (!categorySearch.trim()) return true;
+                            const q = categorySearch.toLowerCase();
+                            return (
+                              c.nameEn?.toLowerCase().includes(q) ||
+                              c.nameBn?.toLowerCase().includes(q) ||
+                              c.name?.toLowerCase().includes(q) ||
+                              c.slug?.toLowerCase().includes(q) ||
+                              c.id?.toLowerCase().includes(q) ||
+                              c.description?.toLowerCase().includes(q)
+                            );
+                          })
+                          .map((cat) => {
+                            const isCatActive = cat.isActive !== false;
+                            const assignedCount = products.filter((p) => p.categoryId === cat.id).length;
+                            return (
+                              <tr key={cat.id} className="hover:bg-slate-800/40 transition-colors">
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-3">
+                                    {cat.imageUrl ? (
+                                      <img
+                                        src={cat.imageUrl}
+                                        alt={cat.nameEn}
+                                        className="w-9 h-9 rounded-lg object-cover bg-slate-800 shrink-0 border border-slate-700"
+                                      />
+                                    ) : (
+                                      <div className={`w-9 h-9 rounded-lg ${cat.badgeColor || 'bg-emerald-600'} flex items-center justify-center text-white shrink-0 shadow-sm`}>
+                                        <Tag className="w-4 h-4" />
+                                      </div>
+                                    )}
+                                    <div>
+                                      <div className="font-semibold text-white flex items-center gap-2">
+                                        <span>{cat.nameEn || cat.name}</span>
+                                        {cat.iconName && (
+                                          <span className="text-[10px] px-1.5 py-0.2 bg-slate-800 rounded-md text-slate-400 font-mono">
+                                            {cat.iconName}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="text-[11px] text-slate-400 font-bengali">
+                                        {cat.nameBn || cat.nameEn}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 font-mono text-[11px] text-emerald-400">
+                                  /{cat.slug || cat.id}
+                                </td>
+                                <td className="px-4 py-3 text-slate-400 max-w-xs truncate" title={cat.description || ''}>
+                                  {cat.description || cat.descriptionEn || '—'}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 text-slate-300">
+                                    {assignedCount}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-center font-mono text-slate-300">
+                                  {cat.sortOrder ?? 0}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <button
+                                    onClick={() => handleToggleCategoryActive(cat)}
+                                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors cursor-pointer ${
+                                      isCatActive
+                                        ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                                        : 'bg-slate-800 text-slate-500 border border-slate-700'
+                                    }`}
+                                  >
+                                    {isCatActive ? '● Active' : '○ Inactive'}
+                                  </button>
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button
+                                      onClick={() => handleOpenEditCategoryModal(cat)}
+                                      className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                                      title="Edit Category"
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => handleDeleteCategory(cat)}
+                                      className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                                      title="Delete Category"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ---------------------------------------------------- */}
             {/* TAB 4: ORDERS */}
             {/* ---------------------------------------------------- */}
             {activeTab === 'orders' && (
@@ -1476,12 +1824,12 @@ export const AdminDashboardModal: React.FC = () => {
                               </td>
                               <td className="px-4 py-3">
                                 <select
-                                  value={order.status}
+                                  value={order.status === 'delivered' ? 'completed' : order.status}
                                   onChange={(e) =>
                                     updateOrderStatus(order.id, e.target.value as OrderStatus)
                                   }
                                   className={`px-2.5 py-1 rounded-lg text-xs font-semibold uppercase border cursor-pointer ${
-                                    order.status === 'completed'
+                                    order.status === 'completed' || order.status === 'delivered'
                                       ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                                       : order.status === 'processing'
                                       ? 'bg-blue-500/10 text-blue-400 border-blue-500/30'
@@ -3590,6 +3938,233 @@ export const AdminDashboardModal: React.FC = () => {
         }}
         productToEdit={productToEdit}
       />
+
+      {/* ---------------------------------------------------- */}
+      {/* CATEGORY FORM MODAL (ADD / EDIT CATEGORY) */}
+      {/* ---------------------------------------------------- */}
+      {isCategoryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden text-slate-100 flex flex-col max-h-[92vh]">
+            <div className="px-6 py-4 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-emerald-500/10 text-emerald-400 rounded-lg">
+                  <Tag className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">
+                    {categoryToEdit ? (t.editCategory || 'Edit Category') : (t.addCategory || 'Add New Category')}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Configure store category metadata, icons, and display ordering.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCategoryModalOpen(false);
+                  setCategoryToEdit(null);
+                }}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCategory} className="p-6 space-y-4 overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {t.categoryNameEn || 'Category Name (English)'} *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={categoryFormNameEn}
+                    onChange={(e) => {
+                      setCategoryFormNameEn(e.target.value);
+                      if (!categoryToEdit && !categoryFormSlug) {
+                        setCategoryFormSlug(
+                          e.target.value
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, '-')
+                            .replace(/^-+|-+$/g, '')
+                        );
+                      }
+                    }}
+                    placeholder="e.g. AI Tools, Streaming"
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-medium"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {t.categoryNameBn || 'Category Name (Bangla)'} *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={categoryFormNameBn}
+                    onChange={(e) => setCategoryFormNameBn(e.target.value)}
+                    placeholder="যেমন: এআই টুলস, স্ট্রিমিং"
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-bengali font-medium"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  {t.categorySlug || 'Slug / URL Key'}
+                </label>
+                <div className="flex items-center">
+                  <span className="px-3 py-2 bg-slate-950 border border-r-0 border-slate-700 text-slate-500 text-xs rounded-l-xl font-mono">
+                    /category/
+                  </span>
+                  <input
+                    type="text"
+                    value={categoryFormSlug}
+                    onChange={(e) =>
+                      setCategoryFormSlug(
+                        e.target.value
+                          .toLowerCase()
+                          .replace(/[^a-z0-9-]+/g, '')
+                      )
+                    }
+                    placeholder="ai-tools"
+                    className="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-r-xl text-xs text-emerald-400 placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Unique identifier used for filtering products. Letters, numbers, and dashes only.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1">
+                  {t.categoryDescription || 'Description'}
+                </label>
+                <textarea
+                  rows={2}
+                  value={categoryFormDesc}
+                  onChange={(e) => setCategoryFormDesc(e.target.value)}
+                  placeholder="Short description of products inside this category..."
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {t.categoryImageUrl || 'Image / Banner URL'}
+                  </label>
+                  <input
+                    type="text"
+                    value={categoryFormImageUrl}
+                    onChange={(e) => setCategoryFormImageUrl(e.target.value)}
+                    placeholder="https://images.unsplash.com/..."
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {t.categoryIcon || 'Icon Name'}
+                  </label>
+                  <select
+                    value={categoryFormIcon}
+                    onChange={(e) => setCategoryFormIcon(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 cursor-pointer"
+                  >
+                    <option value="Sparkles">Sparkles (Special / Multi)</option>
+                    <option value="Bot">Bot (AI & Automation)</option>
+                    <option value="Tv">Tv (Streaming & Media)</option>
+                    <option value="Palette">Palette (Design & Graphics)</option>
+                    <option value="Laptop">Laptop (Software & OS)</option>
+                    <option value="ShieldCheck">ShieldCheck (VPN & Security)</option>
+                    <option value="Tag">Tag (Standard)</option>
+                    <option value="Layers">Layers (Bundles)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {t.categorySortOrder || 'Sort Order'}
+                  </label>
+                  <input
+                    type="number"
+                    value={categoryFormSortOrder}
+                    onChange={(e) => setCategoryFormSortOrder(parseInt(e.target.value) || 0)}
+                    min={0}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-emerald-500 font-mono"
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">Lower numbers appear first on storefront.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 mb-1">
+                    {t.categoryStatus || 'Visibility Status'}
+                  </label>
+                  <div className="flex items-center gap-4 mt-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="catStatus"
+                        checked={categoryFormIsActive}
+                        onChange={() => setCategoryFormIsActive(true)}
+                        className="text-emerald-500 focus:ring-emerald-500"
+                      />
+                      <span className="text-xs font-medium text-emerald-400">{t.categoryActive || 'Active'}</span>
+                    </label>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="catStatus"
+                        checked={!categoryFormIsActive}
+                        onChange={() => setCategoryFormIsActive(false)}
+                        className="text-red-500 focus:ring-red-500"
+                      />
+                      <span className="text-xs font-medium text-slate-400">{t.categoryInactive || 'Inactive'}</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  disabled={isSubmittingCategory}
+                  onClick={() => {
+                    setIsCategoryModalOpen(false);
+                    setCategoryToEdit(null);
+                  }}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmittingCategory}
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold flex items-center gap-2 shadow-md shadow-emerald-600/30 cursor-pointer"
+                >
+                  {isSubmittingCategory ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Saving...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-3.5 h-3.5" />
+                      <span>{categoryToEdit ? 'Update Category' : 'Save Category'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

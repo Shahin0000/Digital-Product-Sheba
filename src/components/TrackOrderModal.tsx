@@ -60,6 +60,7 @@ export const TrackOrderModal: React.FC = () => {
   const getStatusBadge = (status: Order['status']) => {
     switch (status) {
       case 'completed':
+      case 'delivered':
         return (
           <span className="px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full font-bold text-xs flex items-center gap-1">
             <CheckCircle2 className="w-3.5 h-3.5" />

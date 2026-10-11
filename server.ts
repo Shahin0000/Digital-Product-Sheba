@@ -23,6 +23,8 @@ interface FirebaseAdminStatus {
 
 let adminDb: Firestore | null = null;
 let adminAuthInstance: Auth | null = null;
+let adminInitializationAttempted = false;
+
 const adminStatus: FirebaseAdminStatus = {
   configured: false,
   initialized: false,
@@ -32,104 +34,182 @@ const adminStatus: FirebaseAdminStatus = {
 };
 
 function initFirebaseAdmin(): void {
+  // Requirement 7: Initialize Firebase Admin only once and report the actual initialization state
+  if (adminInitializationAttempted) {
+    return;
+  }
+  adminInitializationAttempted = true;
+
   try {
-    const rawCred = process.env.FIREBASE_SERVICE_ACCOUNT;
-    if (rawCred) {
-      adminStatus.configured = true;
-      let cred: any;
-      try {
-        if (typeof rawCred === 'string') {
-          const trimmed = rawCred.trim();
-          if (trimmed.startsWith('{')) {
-            cred = JSON.parse(trimmed);
-          } else {
-            // Support base64-encoded credential string
-            const decoded = Buffer.from(trimmed, 'base64').toString('utf8');
-            cred = JSON.parse(decoded);
-          }
-        } else {
-          cred = rawCred;
+    const rawEnv = process.env.FIREBASE_SERVICE_ACCOUNT;
+    if (!rawEnv || typeof rawEnv !== 'string' || !rawEnv.trim()) {
+      // Fallback check for GOOGLE_APPLICATION_CREDENTIALS if running in GCP environment
+      if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+        const existingApps = getApps();
+        let adminApp = existingApps.find((a) => a.name === 'admin-adc');
+        if (!adminApp) {
+          adminApp = initAdminApp(
+            {
+              credential: applicationDefault(),
+              projectId: firebaseConfig.projectId || 'digiral-product-service',
+            },
+            'admin-adc'
+          );
         }
-      } catch (parseErr: any) {
-        adminStatus.initialized = false;
-        adminStatus.error = `FIREBASE_ADMIN_INITIALIZATION_FAILED: Could not parse FIREBASE_SERVICE_ACCOUNT JSON (${parseErr?.message || parseErr}).`;
-        console.error('[Firebase Admin] Error parsing FIREBASE_SERVICE_ACCOUNT:', parseErr?.message);
+        adminDb = getFirestore(adminApp);
+        adminAuthInstance = getAuth(adminApp);
+        adminStatus.configured = true;
+        adminStatus.initialized = true;
+        adminStatus.projectId = firebaseConfig.projectId || 'digiral-product-service';
+        adminStatus.error = null;
+        console.log('[Firebase Admin] Initialized with GOOGLE_APPLICATION_CREDENTIALS');
         return;
       }
 
-      if (!cred || typeof cred !== 'object') {
-        adminStatus.initialized = false;
-        adminStatus.error = 'FIREBASE_ADMIN_INITIALIZATION_FAILED: FIREBASE_SERVICE_ACCOUNT must be a valid JSON object.';
-        return;
-      }
-
-      const expectedProjectId = 'digiral-product-service';
-      const actualProjectId = cred.project_id || firebaseConfig.projectId;
-
-      if (actualProjectId !== expectedProjectId) {
-        adminStatus.initialized = false;
-        adminStatus.error = `FIREBASE_ADMIN_INITIALIZATION_FAILED: Service account project_id "${actualProjectId}" does not match required Firebase project "${expectedProjectId}".`;
-        console.error(`[Firebase Admin] Project mismatch: got "${actualProjectId}", expected "${expectedProjectId}"`);
-        return;
-      }
-
-      // Normalize private_key escaped newlines if present
-      if (cred.private_key && typeof cred.private_key === 'string') {
-        cred.private_key = cred.private_key.replace(/\\n/g, '\n');
-      }
-
-      const existingApps = getApps();
-      let adminApp = existingApps.find((a) => a.name === 'admin-service');
-      if (!adminApp) {
-        adminApp = initAdminApp(
-          {
-            credential: cert(cred),
-            projectId: expectedProjectId,
-          },
-          'admin-service'
-        );
-      }
-
-      adminDb = getFirestore(adminApp);
-      adminAuthInstance = getAuth(adminApp);
-      adminStatus.initialized = true;
-      adminStatus.projectId = expectedProjectId;
-      if (cred.client_email && typeof cred.client_email === 'string') {
-        const parts = cred.client_email.split('@');
-        adminStatus.maskedClientEmail = `${parts[0].slice(0, 4)}***@${parts[1] || ''}`;
-      }
-      adminStatus.error = null;
-      console.log(`[Firebase Admin] Successfully initialized for project "${expectedProjectId}"`);
-    } else if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-      const existingApps = getApps();
-      let adminApp = existingApps.find((a) => a.name === 'admin-adc');
-      if (!adminApp) {
-        adminApp = initAdminApp(
-          {
-            credential: applicationDefault(),
-            projectId: firebaseConfig.projectId || 'digiral-product-service',
-          },
-          'admin-adc'
-        );
-      }
-      adminDb = getFirestore(adminApp);
-      adminAuthInstance = getAuth(adminApp);
-      adminStatus.configured = true;
-      adminStatus.initialized = true;
-      adminStatus.projectId = firebaseConfig.projectId;
-      adminStatus.error = null;
-      console.log('[Firebase Admin] Initialized with GOOGLE_APPLICATION_CREDENTIALS');
-    } else {
       adminStatus.configured = false;
       adminStatus.initialized = false;
+      adminStatus.projectId = null;
+      adminStatus.maskedClientEmail = null;
       adminStatus.error =
         'FIREBASE_ADMIN_NOT_CONFIGURED: FIREBASE_SERVICE_ACCOUNT environment variable is missing in this Netlify / server runtime. Please configure FIREBASE_SERVICE_ACCOUNT in Netlify site settings -> Environment variables.';
       console.warn('[Firebase Admin]', adminStatus.error);
+      return;
     }
+
+    adminStatus.configured = true;
+
+    // Requirement 1: Read FIREBASE_SERVICE_ACCOUNT as a JSON string using JSON.parse() only when it is configured as JSON text.
+    // Requirement 6: Do not interpret arbitrary binary data as JSON.
+    let candidate = rawEnv.replace(/^\uFEFF/, '').trim();
+
+    // Strip single quotes if wrapped (common shell/dotenv artifact: '{"project_id":...}')
+    if (candidate.startsWith("'") && candidate.endsWith("'") && candidate.length >= 2) {
+      candidate = candidate.slice(1, -1).trim();
+    }
+
+    let cred: any = null;
+    try {
+      if (!candidate.startsWith('{') && !candidate.startsWith('"')) {
+        throw new Error('Value does not begin with "{" or "\"" (not JSON text)');
+      }
+
+      const firstPass = JSON.parse(candidate);
+      if (typeof firstPass === 'string') {
+        // Handle case where environment variable value was stored with outer JSON string escaping
+        const secondCandidate = firstPass.trim();
+        if (secondCandidate.startsWith('{')) {
+          cred = JSON.parse(secondCandidate);
+        } else {
+          throw new Error('Unescaped value is not a JSON object');
+        }
+      } else if (typeof firstPass === 'object' && firstPass !== null && !Array.isArray(firstPass)) {
+        cred = firstPass;
+      } else {
+        throw new Error('Parsed value is not a JSON object');
+      }
+    } catch (parseErr: any) {
+      // Requirement 4 & 5: Clear, sanitized configuration error without logging private keys or raw contents
+      adminStatus.initialized = false;
+      adminStatus.projectId = null;
+      adminStatus.maskedClientEmail = null;
+      adminStatus.error =
+        'FIREBASE_ADMIN_INITIALIZATION_FAILED: Could not parse FIREBASE_SERVICE_ACCOUNT JSON. Value must be valid unencoded JSON text of the Firebase service account key file.';
+      console.error('[Firebase Admin] Failed to parse FIREBASE_SERVICE_ACCOUNT as JSON text. Ensure valid JSON string is configured without binary or malformed data.');
+      return;
+    }
+
+    // Requirement 2: Validate that the parsed object contains project_id, client_email, and private_key
+    if (!cred || typeof cred !== 'object' || Array.isArray(cred)) {
+      adminStatus.initialized = false;
+      adminStatus.projectId = null;
+      adminStatus.maskedClientEmail = null;
+      adminStatus.error =
+        'FIREBASE_ADMIN_INITIALIZATION_FAILED: FIREBASE_SERVICE_ACCOUNT must be a valid JSON object.';
+      return;
+    }
+
+    const { project_id, client_email, private_key } = cred;
+
+    if (!project_id || typeof project_id !== 'string' || !project_id.trim()) {
+      adminStatus.initialized = false;
+      adminStatus.projectId = null;
+      adminStatus.maskedClientEmail = null;
+      adminStatus.error =
+        'FIREBASE_ADMIN_INITIALIZATION_FAILED: Service account JSON is missing required field "project_id".';
+      console.error('[Firebase Admin] Missing "project_id" in FIREBASE_SERVICE_ACCOUNT.');
+      return;
+    }
+
+    if (!client_email || typeof client_email !== 'string' || !client_email.trim()) {
+      adminStatus.initialized = false;
+      adminStatus.projectId = null;
+      adminStatus.maskedClientEmail = null;
+      adminStatus.error =
+        'FIREBASE_ADMIN_INITIALIZATION_FAILED: Service account JSON is missing required field "client_email".';
+      console.error('[Firebase Admin] Missing "client_email" in FIREBASE_SERVICE_ACCOUNT.');
+      return;
+    }
+
+    if (!private_key || typeof private_key !== 'string' || !private_key.trim()) {
+      adminStatus.initialized = false;
+      adminStatus.projectId = null;
+      adminStatus.maskedClientEmail = null;
+      adminStatus.error =
+        'FIREBASE_ADMIN_INITIALIZATION_FAILED: Service account JSON is missing required field "private_key".';
+      console.error('[Firebase Admin] Missing "private_key" in FIREBASE_SERVICE_ACCOUNT.');
+      return;
+    }
+
+    // Requirement 3: Confirm project_id === "digiral-product-service"
+    const EXPECTED_PROJECT_ID = 'digiral-product-service';
+    const actualProjectId = project_id.trim();
+
+    if (actualProjectId !== EXPECTED_PROJECT_ID) {
+      adminStatus.initialized = false;
+      adminStatus.projectId = actualProjectId;
+      adminStatus.maskedClientEmail = null;
+      adminStatus.error = `FIREBASE_ADMIN_INITIALIZATION_FAILED: Service account project_id "${actualProjectId}" does not match required Firebase project "${EXPECTED_PROJECT_ID}".`;
+      console.error(`[Firebase Admin] Project mismatch: got "${actualProjectId}", expected "${EXPECTED_PROJECT_ID}"`);
+      return;
+    }
+
+    // Normalize private_key escaped newlines if present (e.g., \\n vs real \n)
+    const normalizedPrivateKey = private_key.replace(/\\n/g, '\n');
+
+    const existingApps = getApps();
+    let adminApp = existingApps.find((a) => a.name === 'admin-service');
+    if (!adminApp) {
+      adminApp = initAdminApp(
+        {
+          credential: cert({
+            projectId: actualProjectId,
+            clientEmail: client_email.trim(),
+            privateKey: normalizedPrivateKey,
+          }),
+          projectId: EXPECTED_PROJECT_ID,
+        },
+        'admin-service'
+      );
+    }
+
+    adminDb = getFirestore(adminApp);
+    adminAuthInstance = getAuth(adminApp);
+    adminStatus.initialized = true;
+    adminStatus.projectId = EXPECTED_PROJECT_ID;
+
+    // Requirement 5: Never log or return the private key, complete environment variable, or service-account contents
+    const emailParts = client_email.trim().split('@');
+    adminStatus.maskedClientEmail =
+      emailParts.length === 2
+        ? `${emailParts[0].slice(0, 4)}***@${emailParts[1]}`
+        : '***@serviceaccount.com';
+    adminStatus.error = null;
+
+    console.log(`[Firebase Admin] Successfully initialized for project "${EXPECTED_PROJECT_ID}"`);
   } catch (err: any) {
     adminStatus.initialized = false;
-    adminStatus.error = `FIREBASE_ADMIN_INITIALIZATION_FAILED: ${err?.message || String(err)}`;
-    console.error('[Firebase Admin] Initialization failed:', err?.message || err);
+    adminStatus.error = `FIREBASE_ADMIN_INITIALIZATION_FAILED: ${err?.message || 'Unexpected initialization error'}`;
+    console.error('[Firebase Admin] Initialization failed:', err?.message || 'Unknown error');
   }
 }
 
@@ -385,6 +465,11 @@ app.get(['/api/health', '/.netlify/functions/api/health', '/health'], (req: Requ
 });
 
 app.get(['/api/admin/status', '/.netlify/functions/api/admin/status', '/admin/status'], (req: Request, res: Response) => {
+  if (req.query.reload === '1' || req.query.refresh === '1') {
+    adminInitializationAttempted = false;
+    initFirebaseAdmin();
+  }
+
   res.json({
     status: 'ok',
     service: 'Digital Product Sheba Admin API',

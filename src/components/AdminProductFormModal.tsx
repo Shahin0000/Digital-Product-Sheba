@@ -130,7 +130,8 @@ export const AdminProductFormModal: React.FC<AdminProductFormModalProps> = ({
       // Reset form for fresh product creation
       setTitleEn('');
       setTitleBn('');
-      setCategoryId(categories[1]?.id || 'ott');
+      const defaultCat = categories.find((c) => c.id !== 'all' && c.isActive !== false) || categories[1] || categories[0];
+      setCategoryId(defaultCat?.id || 'ai-tools');
       setImage(PRESET_IMAGES[0].url);
       setBadgeEn('HOT SELLER');
       setBadgeBn('জনপ্রিয়');
@@ -411,11 +412,13 @@ export const AdminProductFormModal: React.FC<AdminProductFormModalProps> = ({
                   onChange={(e) => setCategoryId(e.target.value)}
                   className="w-full px-3 py-2 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-emerald-600 outline-hidden font-medium cursor-pointer"
                 >
-                  {categories.slice(1).map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.nameEn} ({c.nameBn})
-                    </option>
-                  ))}
+                  {categories
+                    .filter((c) => c.id !== 'all')
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.nameEn || c.name || c.id} ({c.nameBn || c.nameEn || c.id}) {c.isActive === false ? '— [Inactive]' : ''}
+                      </option>
+                    ))}
                 </select>
               </div>
 

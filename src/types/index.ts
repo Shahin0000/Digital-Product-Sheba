@@ -54,11 +54,22 @@ export interface Product {
 }
 
 export interface Category {
-  id: string;
+  id: string; // unique slug/id e.g. 'ai-tools'
+  name?: string; // Standard unified name
   nameEn: string;
   nameBn: string;
-  iconName: string;
-  badgeColor: string;
+  slug?: string; // URL slug e.g. 'ai-tools'
+  description?: string;
+  descriptionEn?: string;
+  descriptionBn?: string;
+  imageUrl?: string;
+  iconName?: string;
+  badgeColor?: string;
+  isActive?: boolean;
+  sortOrder?: number;
+  productCount?: number;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface CartItem {

@@ -732,7 +732,7 @@ app.get(['/api/categories', '/.netlify/functions/api/categories'], async (req: R
     const snap = await adminDb.collection('categories').get();
     const categories: any[] = [];
     snap.forEach((doc) => {
-      categories.push({ id: doc.id, ...doc.data() });
+      categories.push({ ...doc.data(), id: doc.id });
     });
     return res.json({ success: true, categories });
   } catch (err: any) {
@@ -802,31 +802,51 @@ app.put(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categories/
     return res.status(authRes.status).json({ error: authRes.error });
   }
 
-  const catId = req.params.id;
-  if (!catId) {
-    return res.status(400).json({ error: 'Category ID is required' });
+  const catId = req.params.id?.trim();
+  if (!catId || catId === 'all') {
+    return res.status(400).json({ error: 'Valid Category ID is required' });
   }
 
   try {
     if (!adminDb) initFirebaseAdmin();
     if (!adminDb) return res.status(503).json({ error: 'Database service unavailable' });
 
-    const docRef = adminDb.collection('categories').doc(catId);
-    const existing = await docRef.get();
+    let docRef = adminDb.collection('categories').doc(catId);
+    let existing = await docRef.get();
+
+    // If direct lookup by doc ID misses, verify if catId matches an existing doc's id or slug field
+    if (!existing.exists) {
+      const qSnap = await adminDb.collection('categories').where('id', '==', catId).limit(1).get();
+      if (!qSnap.empty) {
+        docRef = qSnap.docs[0].ref;
+        existing = qSnap.docs[0];
+      } else {
+        const slugSnap = await adminDb.collection('categories').where('slug', '==', catId).limit(1).get();
+        if (!slugSnap.empty) {
+          docRef = slugSnap.docs[0].ref;
+          existing = slugSnap.docs[0];
+        }
+      }
+    }
+
     if (!existing.exists) {
       return res.status(404).json({ error: `Category "${catId}" not found` });
     }
 
+    const existingData = existing.data() || {};
+    const targetDocId = docRef.id;
+
     const updatePayload: Record<string, any> = {
+      ...existingData,
       ...req.body,
+      id: targetDocId, // Strictly preserve authoritative doc id
       updatedAt: new Date().toISOString(),
     };
-    delete updatePayload.id; // Preserve doc id
 
-    await docRef.update(updatePayload);
+    await docRef.set(updatePayload, { merge: true });
     const updatedSnap = await docRef.get();
-    console.log(`[Admin Categories] Updated category: ${catId} by admin: ${authRes.email}`);
-    return res.json({ success: true, category: { id: catId, ...updatedSnap.data() } });
+    console.log(`[Admin Categories] Updated category: ${targetDocId} by admin: ${authRes.email}`);
+    return res.json({ success: true, category: { ...updatedSnap.data(), id: targetDocId } });
   } catch (err: any) {
     console.error('[Admin Categories] Update category error:', err);
     return res.status(500).json({ error: 'Failed to update category', details: err?.message || String(err) });
@@ -839,7 +859,7 @@ app.delete(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categori
     return res.status(authRes.status).json({ error: authRes.error });
   }
 
-  const catId = req.params.id;
+  const catId = req.params.id?.trim();
   if (!catId || catId === 'all') {
     return res.status(400).json({ error: 'Default "All Products" category cannot be deleted.' });
   }
@@ -848,8 +868,20 @@ app.delete(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categori
     if (!adminDb) initFirebaseAdmin();
     if (!adminDb) return res.status(503).json({ error: 'Database service unavailable' });
 
+    let docRef = adminDb.collection('categories').doc(catId);
+    let existing = await docRef.get();
+    if (!existing.exists) {
+      const qSnap = await adminDb.collection('categories').where('id', '==', catId).limit(1).get();
+      if (!qSnap.empty) {
+        docRef = qSnap.docs[0].ref;
+        existing = qSnap.docs[0];
+      }
+    }
+
+    const actualId = docRef.id;
+
     // Safeguard: Check if any products depend on this category
-    const productsSnap = await adminDb.collection('products').where('categoryId', '==', catId).get();
+    const productsSnap = await adminDb.collection('products').where('categoryId', '==', actualId).get();
     if (!productsSnap.empty) {
       return res.status(400).json({
         error: `Cannot delete: ${productsSnap.size} product(s) are assigned to this category. Please reassign them first.`,
@@ -857,9 +889,9 @@ app.delete(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categori
       });
     }
 
-    await adminDb.collection('categories').doc(catId).delete();
-    console.log(`[Admin Categories] Deleted category: ${catId} by admin: ${authRes.email}`);
-    return res.json({ success: true, message: `Category "${catId}" deleted successfully.` });
+    await docRef.delete();
+    console.log(`[Admin Categories] Deleted category: ${actualId} by admin: ${authRes.email}`);
+    return res.json({ success: true, message: `Category "${actualId}" deleted successfully.` });
   } catch (err: any) {
     console.error('[Admin Categories] Delete category error:', err);
     return res.status(500).json({ error: 'Failed to delete category', details: err?.message || String(err) });

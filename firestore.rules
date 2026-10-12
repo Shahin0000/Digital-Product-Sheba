@@ -58,6 +58,18 @@ service cloud.firestore {
       allow create, update, delete: if isValidId(productId) && isAdmin();
     }
 
+    // 4. Categories collection (Public read for active store categories, admin-only management)
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(categoryId) && isAdmin();
+    }
+
+    // 5. Connection test document (Public read, admin write)
+    match /test/{testId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // 4. Orders collection
     // Customers: create and read only their own order
     // Admin: full access (get, list, create, update, delete) with original document IDs preserved during restore
@@ -110,18 +122,6 @@ service cloud.firestore {
           !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'adminReply', 'userId']))
       );
       allow delete: if isValidId(complaintId) && isAdmin();
-    }
-
-    // 8. Connection test document (Public read, admin write)
-    match /test/{testId} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-
-    // 9. Categories collection (Public read for active store categories, admin-only management)
-    match /categories/{categoryId} {
-      allow read: if true;
-      allow create, update, delete: if isValidId(categoryId) && isAdmin();
     }
 
     // 10. Coupons collection (Public read for checkout discounts, admin-only management)

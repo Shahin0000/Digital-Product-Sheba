@@ -475,6 +475,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             const nameBn = data.nameBn || data.nameEn || data.name || docSnap.id;
             const slug = data.slug || docSnap.id;
             loadedCategories.push({
+              ...data,
               id: docSnap.id,
               name: data.name || nameEn,
               nameEn,
@@ -667,14 +668,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error(lang === 'bn' ? '"সব প্রোডাক্ট" ফিল্টার সম্পাদনা করা যাবে না।' : 'Default "All Products" category cannot be edited.');
     }
 
-    const existingCat = categories.find((c) => c.id === categoryId);
+    const trimmedId = categoryId?.trim();
+    if (!trimmedId) {
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরি আইডি আবশ্যক।' : 'Category ID is required.');
+    }
+
+    // 1. Resolve existing category by id or slug
+    const existingCat = categories.find((c) => c.id === trimmedId || (c.slug && c.slug === trimmedId));
     if (!existingCat) {
       throw new Error(lang === 'bn' ? 'ক্যাটাগরি পাওয়া যায়নি।' : `Category "${categoryId}" not found.`);
     }
 
+    // Authoritative Firestore document ID must remain stable
+    const docId = existingCat.id;
+
     if (updatedData.slug) {
       const duplicate = categories.find(
-        (c) => c.id !== categoryId && c.id !== 'all' && (c.slug === updatedData.slug || c.id === updatedData.slug)
+        (c) => c.id !== docId && c.id !== 'all' && (c.slug === updatedData.slug || c.id === updatedData.slug)
       );
       if (duplicate) {
         throw new Error(
@@ -687,7 +697,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     if (updatedData.nameEn) {
       const duplicate = categories.find(
-        (c) => c.id !== categoryId && c.id !== 'all' && c.nameEn?.toLowerCase() === updatedData.nameEn?.trim().toLowerCase()
+        (c) => c.id !== docId && c.id !== 'all' && c.nameEn?.toLowerCase() === updatedData.nameEn?.trim().toLowerCase()
       );
       if (duplicate) {
         throw new Error(
@@ -698,18 +708,27 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
 
-    const patchData = {
+    // Preserve all existing category fields that are not explicitly edited
+    const mergedCategory: Category = {
+      ...existingCat,
       ...updatedData,
+      id: docId, // Strictly preserve document ID
       updatedAt: new Date().toISOString(),
     };
-    const cleanData = sanitizeForFirestore(patchData);
+    const cleanData = sanitizeForFirestore(mergedCategory);
     let writeSuccess = false;
 
-    // 1. Try direct Client Firestore SDK with 5s timeout
+    // 1. Try direct Client Firestore SDK:
+    // setDoc with { merge: true } writes the updated fields into the exact document ID without overwriting unrelated fields.
+    // Unlike updateDoc, it also succeeds if the category was an initial category that hadn't yet been persisted.
     try {
-      console.log('FIRESTORE WRITE START (update category):', categoryId);
-      await withTimeout(updateDoc(doc(db, 'categories', categoryId), cleanData), 5000, 'Firestore update timed out');
-      console.log('FIRESTORE WRITE SUCCESS (update category):', categoryId);
+      console.log('FIRESTORE WRITE START (update category):', docId);
+      await withTimeout(
+        setDoc(doc(db, 'categories', docId), cleanData, { merge: true }),
+        5000,
+        'Firestore update timed out'
+      );
+      console.log('FIRESTORE WRITE SUCCESS (update category):', docId);
       writeSuccess = true;
     } catch (clientErr) {
       console.warn('Direct Firestore client update failed, attempting server API fallback:', clientErr);
@@ -717,7 +736,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       if (idToken) {
         try {
           const res = await withTimeout(
-            fetch(`/api/admin/categories/${categoryId}`, {
+            fetch(`/api/admin/categories/${docId}`, {
               method: 'PUT',
               headers: {
                 'Content-Type': 'application/json',
@@ -730,7 +749,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           );
           if (res.ok) {
             writeSuccess = true;
-            console.log('SERVER API WRITE SUCCESS (update category):', categoryId);
+            console.log('SERVER API WRITE SUCCESS (update category):', docId);
           } else {
             const errData = await res.json().catch(() => ({}));
             throw new Error(errData.error || `Server returned ${res.status}`);
@@ -747,7 +766,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (writeSuccess) {
       // Instant local state update
       setCategories((prev) => {
-        const updated = prev.map((c) => (c.id === categoryId ? { ...c, ...cleanData } : c));
+        const updated = prev.map((c) => (c.id === docId ? mergedCategory : c));
         updated.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
         return updated;
       });
@@ -763,13 +782,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error(lang === 'bn' ? '"সব প্রোডাক্ট" ফিল্টার মুছে ফেলা যাবে না।' : 'Default "All Products" category cannot be deleted.');
     }
 
-    const existingCat = categories.find((c) => c.id === categoryId);
+    const trimmedId = categoryId?.trim();
+    const existingCat = categories.find((c) => c.id === trimmedId || (c.slug && c.slug === trimmedId));
     if (!existingCat) {
       throw new Error(lang === 'bn' ? 'ক্যাটাগরি পাওয়া যায়নি।' : `Category "${categoryId}" not found.`);
     }
 
-    // Check if any product belongs to this category
-    const associatedProducts = products.filter((p) => p.categoryId === categoryId);
+    const docId = existingCat.id;
+
+    // Check if any product belongs to this category (by id or slug)
+    const associatedProducts = products.filter(
+      (p) => p.categoryId === docId || (existingCat.slug && p.categoryId === existingCat.slug)
+    );
     if (associatedProducts.length > 0) {
       const warning =
         lang === 'bn'

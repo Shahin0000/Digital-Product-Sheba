@@ -15,11 +15,14 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Single authoritative source of admin authority: users/{uid}.role == "admin"
+    // Authoritative source of admin authority: users/{uid}.role == "admin", bootstrapped admin email, and admins/{uid}
     function isAdmin() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return isSignedIn() && (
+        (request.auth.token.email == 'shahinpc2018@gmail.com') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
     }
 
     // 1. Users collection
@@ -30,7 +33,7 @@ service cloud.firestore {
       allow read: if isValidId(userId) && (isOwner(userId) || isAdmin());
       allow create: if isValidId(userId) && (
         isAdmin() ||
-        (isOwner(userId) && request.resource.data.role == 'customer')
+        (isOwner(userId) && (request.resource.data.role == 'customer' || request.auth.token.email == 'shahinpc2018@gmail.com'))
       );
       allow update: if isValidId(userId) && (
         (isAdmin() && (userId != request.auth.uid || request.resource.data.role == 'admin')) ||

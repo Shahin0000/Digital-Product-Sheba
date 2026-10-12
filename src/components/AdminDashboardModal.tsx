@@ -146,6 +146,8 @@ export const AdminDashboardModal: React.FC = () => {
   const [categoryFormIsActive, setCategoryFormIsActive] = useState(true);
   const [categoryFormSortOrder, setCategoryFormSortOrder] = useState(0);
   const [isSubmittingCategory, setIsSubmittingCategory] = useState(false);
+  const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
+  const [togglingCategoryId, setTogglingCategoryId] = useState<string | null>(null);
 
   // Users Filter & Promotion
   const [userSearch, setUserSearch] = useState('');
@@ -687,6 +689,8 @@ export const AdminDashboardModal: React.FC = () => {
 
   const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingCategory) return;
+
     if (!categoryFormNameEn.trim() || !categoryFormNameBn.trim()) {
       showToast(
         lang === 'bn' ? 'ক্যাটাগরির ইংরেজি ও বাংলা নাম দেওয়া আবশ্যক।' : 'English and Bangla names are required.',
@@ -737,13 +741,17 @@ export const AdminDashboardModal: React.FC = () => {
       setIsCategoryModalOpen(false);
       setCategoryToEdit(null);
     } catch (err: any) {
-      console.error('Save category error:', err);
+      console.error('[Category] Save category error:', err);
+      const errMsg = err?.message || (lang === 'bn' ? 'ক্যাটাগরি সংরক্ষণে সমস্যা হয়েছে।' : 'Failed to save category. Please try again.');
+      showToast(errMsg, 'error');
     } finally {
       setIsSubmittingCategory(false);
     }
   };
 
   const handleDeleteCategory = async (cat: Category) => {
+    if (deletingCategoryId) return;
+
     if (cat.id === 'all') {
       showToast(lang === 'bn' ? '"সব প্রোডাক্ট" ফিল্টার মুছে ফেলা যাবে না।' : 'Default "All Products" category cannot be deleted.', 'error');
       return;
@@ -770,21 +778,31 @@ export const AdminDashboardModal: React.FC = () => {
       return;
     }
 
+    setDeletingCategoryId(cat.id);
     try {
       await deleteCategory(cat.id);
     } catch (err: any) {
-      console.error('Delete category error:', err);
+      console.error('[Category] Delete category error:', err);
+      const errMsg = err?.message || (lang === 'bn' ? 'ক্যাটাগরি মুছতে ব্যর্থ হয়েছে।' : 'Failed to delete category.');
+      showToast(errMsg, 'error');
+    } finally {
+      setDeletingCategoryId(null);
     }
   };
 
   const handleToggleCategoryActive = async (cat: Category) => {
-    if (cat.id === 'all') return;
+    if (cat.id === 'all' || togglingCategoryId) return;
+    setTogglingCategoryId(cat.id);
     try {
       await updateCategory(cat.id, {
         isActive: cat.isActive === false,
       });
     } catch (err: any) {
-      console.error('Toggle category active error:', err);
+      console.error('[Category] Toggle category active error:', err);
+      const errMsg = err?.message || (lang === 'bn' ? 'ক্যাটাগরি স্ট্যাটাস পরিবর্তন ব্যর্থ হয়েছে।' : 'Failed to update category status.');
+      showToast(errMsg, 'error');
+    } finally {
+      setTogglingCategoryId(null);
     }
   };
 
@@ -1672,13 +1690,14 @@ export const AdminDashboardModal: React.FC = () => {
                                 <td className="px-4 py-3">
                                   <button
                                     onClick={() => handleToggleCategoryActive(cat)}
-                                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors cursor-pointer ${
+                                    disabled={togglingCategoryId === cat.id}
+                                    className={`px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors cursor-pointer disabled:opacity-50 ${
                                       isCatActive
                                         ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
                                         : 'bg-slate-800 text-slate-500 border border-slate-700'
                                     }`}
                                   >
-                                    {isCatActive ? '● Active' : '○ Inactive'}
+                                    {togglingCategoryId === cat.id ? 'Updating...' : isCatActive ? '● Active' : '○ Inactive'}
                                   </button>
                                 </td>
                                 <td className="px-4 py-3 text-right">
@@ -1692,10 +1711,15 @@ export const AdminDashboardModal: React.FC = () => {
                                     </button>
                                     <button
                                       onClick={() => handleDeleteCategory(cat)}
-                                      className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                                      disabled={deletingCategoryId === cat.id}
+                                      className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                                       title="Delete Category"
                                     >
-                                      <Trash2 className="w-4 h-4" />
+                                      {deletingCategoryId === cat.id ? (
+                                        <RefreshCw className="w-4 h-4 animate-spin text-red-400" />
+                                      ) : (
+                                        <Trash2 className="w-4 h-4" />
+                                      )}
                                     </button>
                                   </div>
                                 </td>

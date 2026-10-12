@@ -520,9 +520,49 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => unsubscribe();
   }, []);
 
+  function withTimeout<T>(promise: Promise<T>, ms = 5000, errorMsg = 'Operation timed out'): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), ms)),
+    ]);
+  }
+
+  const formatCategoryErrorMessage = (err: unknown): string => {
+    const raw = err instanceof Error ? err.message : String(err);
+    const lower = raw.toLowerCase();
+    if (lower.includes('permission') || lower.includes('insufficient') || lower.includes('access denied')) {
+      return lang === 'bn'
+        ? 'অনুমতি অস্বীকৃত: ক্যাটাগরি পরিবর্তনের জন্য অ্যাডমিনের অনুমোদন প্রয়োজন।'
+        : 'Permission Denied: Administrator privileges required to manage categories.';
+    }
+    if (lower.includes('timed out') || lower.includes('timeout')) {
+      return lang === 'bn'
+        ? 'অনুরোধের সময় শেষ হয়ে গেছে। ইন্টারনেট সংযোগ পরীক্ষা করে পুনরায় চেষ্টা করুন।'
+        : 'Operation timed out. Please check your internet connection and try again.';
+    }
+    if (lower.includes('not found') || lower.includes('404')) {
+      return lang === 'bn' ? 'ক্যাটাগরি পাওয়া যায়নি।' : 'Category not found or already deleted.';
+    }
+    if (lower.includes('offline') || lower.includes('network') || lower.includes('failed to fetch')) {
+      return lang === 'bn'
+        ? 'নেটওয়ার্ক সমস্যা: সার্ভারের সাথে যোগাযোগ করা যাচ্ছে না।'
+        : 'Network Error: Unable to communicate with the database. Please check your connection.';
+    }
+    if (lower.includes('not initialized') || lower.includes('service unavailable') || lower.includes('503')) {
+      return lang === 'bn'
+        ? 'ডাটাবেস সার্ভিস অনুপলব্ধ।'
+        : 'Database service currently unavailable. Please verify admin configuration.';
+    }
+    return raw;
+  };
+
   const addCategory = async (
     categoryData: Partial<Category> & { nameEn: string; nameBn: string }
   ): Promise<Category> => {
+    if (!categoryData.nameEn?.trim() || !categoryData.nameBn?.trim()) {
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরির ইংরেজি ও বাংলা নাম দেওয়া আবশ্যক।' : 'English and Bangla category names are required.');
+    }
+
     // Generate clean slug from name or custom slug
     const rawSlug = (categoryData.slug || categoryData.id || categoryData.nameEn || '')
       .toLowerCase()
@@ -531,9 +571,23 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       .replace(/^-+|-+$/g, '');
     const catId = rawSlug || `cat-${Date.now()}`;
 
+    // Prevent duplicate category name or slug
+    const duplicate = categories.find(
+      (c) =>
+        c.id !== 'all' &&
+        (c.id === catId || c.slug === catId || c.nameEn?.toLowerCase() === categoryData.nameEn.trim().toLowerCase())
+    );
+    if (duplicate) {
+      throw new Error(
+        lang === 'bn'
+          ? `"${categoryData.nameEn.trim()}" বা স্লাগ "${catId}" নামে ইতিমধ্যে একটি ক্যাটাগরি রয়েছে।`
+          : `A category with name "${categoryData.nameEn.trim()}" or slug "${catId}" already exists.`
+      );
+    }
+
     const newCat: Category = {
       id: catId,
-      name: categoryData.name || categoryData.nameEn,
+      name: categoryData.name || categoryData.nameEn.trim(),
       nameEn: categoryData.nameEn.trim(),
       nameBn: categoryData.nameBn.trim(),
       slug: catId,
@@ -549,12 +603,50 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       updatedAt: new Date().toISOString(),
     };
 
+    const cleanData = sanitizeForFirestore(newCat);
+    let writeSuccess = false;
+
+    // 1. Try direct Client Firestore SDK with 5s timeout
     try {
       console.log('FIRESTORE WRITE START (create category):', catId);
-      const cleanData = sanitizeForFirestore(newCat);
-      await setDoc(doc(db, 'categories', catId), cleanData);
+      await withTimeout(setDoc(doc(db, 'categories', catId), cleanData), 5000, 'Firestore request timed out');
       console.log('FIRESTORE WRITE SUCCESS (create category):', catId);
+      writeSuccess = true;
+    } catch (clientErr) {
+      console.warn('Direct Firestore client write failed, attempting server API fallback:', clientErr);
+      // 2. Fallback to Server API via Firebase Admin SDK
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      if (idToken) {
+        try {
+          const res = await withTimeout(
+            fetch('/api/admin/categories', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${idToken}`,
+              },
+              body: JSON.stringify(cleanData),
+            }),
+            5000,
+            'Server API timed out'
+          );
+          if (res.ok) {
+            writeSuccess = true;
+            console.log('SERVER API WRITE SUCCESS (create category):', catId);
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Server returned ${res.status}`);
+          }
+        } catch (apiErr) {
+          console.error('Server API fallback failed:', apiErr);
+          throw new Error(formatCategoryErrorMessage(apiErr));
+        }
+      } else {
+        throw new Error(formatCategoryErrorMessage(clientErr));
+      }
+    }
 
+    if (writeSuccess) {
       // Instant optimistic local state update
       setCategories((prev) => {
         const without = prev.filter((c) => c.id !== catId);
@@ -565,23 +657,94 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
       showToast(t.categorySaved, 'success');
       return newCat;
-    } catch (error) {
-      console.error('FIRESTORE WRITE ERROR (create category):', error);
-      handleFirestoreError(error, OperationType.CREATE, `categories/${catId}`);
+    } else {
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরি সংরক্ষণে ব্যর্থ হয়েছে।' : 'Failed to save category.');
     }
   };
 
   const updateCategory = async (categoryId: string, updatedData: Partial<Category>) => {
+    if (categoryId === 'all') {
+      throw new Error(lang === 'bn' ? '"সব প্রোডাক্ট" ফিল্টার সম্পাদনা করা যাবে না।' : 'Default "All Products" category cannot be edited.');
+    }
+
+    const existingCat = categories.find((c) => c.id === categoryId);
+    if (!existingCat) {
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরি পাওয়া যায়নি।' : `Category "${categoryId}" not found.`);
+    }
+
+    if (updatedData.slug) {
+      const duplicate = categories.find(
+        (c) => c.id !== categoryId && c.id !== 'all' && (c.slug === updatedData.slug || c.id === updatedData.slug)
+      );
+      if (duplicate) {
+        throw new Error(
+          lang === 'bn'
+            ? `স্লাগ "${updatedData.slug}" নামে ইতিমধ্যে অন্য একটি ক্যাটাগরি রয়েছে।`
+            : `Another category with slug "${updatedData.slug}" already exists.`
+        );
+      }
+    }
+
+    if (updatedData.nameEn) {
+      const duplicate = categories.find(
+        (c) => c.id !== categoryId && c.id !== 'all' && c.nameEn?.toLowerCase() === updatedData.nameEn?.trim().toLowerCase()
+      );
+      if (duplicate) {
+        throw new Error(
+          lang === 'bn'
+            ? `"${updatedData.nameEn.trim()}" নামে ইতিমধ্যে অন্য একটি ক্যাটাগরি রয়েছে।`
+            : `Another category with name "${updatedData.nameEn.trim()}" already exists.`
+        );
+      }
+    }
+
+    const patchData = {
+      ...updatedData,
+      updatedAt: new Date().toISOString(),
+    };
+    const cleanData = sanitizeForFirestore(patchData);
+    let writeSuccess = false;
+
+    // 1. Try direct Client Firestore SDK with 5s timeout
     try {
       console.log('FIRESTORE WRITE START (update category):', categoryId);
-      const patchData = {
-        ...updatedData,
-        updatedAt: new Date().toISOString(),
-      };
-      const cleanData = sanitizeForFirestore(patchData);
-      await updateDoc(doc(db, 'categories', categoryId), cleanData);
+      await withTimeout(updateDoc(doc(db, 'categories', categoryId), cleanData), 5000, 'Firestore update timed out');
       console.log('FIRESTORE WRITE SUCCESS (update category):', categoryId);
+      writeSuccess = true;
+    } catch (clientErr) {
+      console.warn('Direct Firestore client update failed, attempting server API fallback:', clientErr);
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      if (idToken) {
+        try {
+          const res = await withTimeout(
+            fetch(`/api/admin/categories/${categoryId}`, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${idToken}`,
+              },
+              body: JSON.stringify(cleanData),
+            }),
+            5000,
+            'Server API timed out'
+          );
+          if (res.ok) {
+            writeSuccess = true;
+            console.log('SERVER API WRITE SUCCESS (update category):', categoryId);
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Server returned ${res.status}`);
+          }
+        } catch (apiErr) {
+          console.error('Server API fallback failed:', apiErr);
+          throw new Error(formatCategoryErrorMessage(apiErr));
+        }
+      } else {
+        throw new Error(formatCategoryErrorMessage(clientErr));
+      }
+    }
 
+    if (writeSuccess) {
       // Instant local state update
       setCategories((prev) => {
         const updated = prev.map((c) => (c.id === categoryId ? { ...c, ...cleanData } : c));
@@ -590,31 +753,79 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
 
       showToast(t.categorySaved, 'success');
-    } catch (error) {
-      console.error('FIRESTORE WRITE ERROR (update category):', error);
-      handleFirestoreError(error, OperationType.UPDATE, `categories/${categoryId}`);
+    } else {
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরি আপডেট ব্যর্থ হয়েছে।' : 'Failed to update category.');
     }
   };
 
   const deleteCategory = async (categoryId: string) => {
+    if (categoryId === 'all') {
+      throw new Error(lang === 'bn' ? '"সব প্রোডাক্ট" ফিল্টার মুছে ফেলা যাবে না।' : 'Default "All Products" category cannot be deleted.');
+    }
+
+    const existingCat = categories.find((c) => c.id === categoryId);
+    if (!existingCat) {
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরি পাওয়া যায়নি।' : `Category "${categoryId}" not found.`);
+    }
+
     // Check if any product belongs to this category
     const associatedProducts = products.filter((p) => p.categoryId === categoryId);
     if (associatedProducts.length > 0) {
-      const warning = t.categoryHasProductsWarning ||
-        `Cannot delete category: ${associatedProducts.length} product(s) are assigned to it. Please reassign them first.`;
+      const warning =
+        lang === 'bn'
+          ? `এই ক্যাটাগরিতে ${associatedProducts.length}টি প্রোডাক্ট আছে। ক্যাটাগরি মুছে ফেলার আগে প্রোডাক্ট অন্য ক্যাটাগরিতে স্থানান্তর করুন।`
+          : `Cannot delete category: ${associatedProducts.length} product(s) are assigned to this category. Please reassign them first.`;
       showToast(warning, 'error');
       throw new Error(warning);
     }
 
+    let writeSuccess = false;
+
+    // 1. Try direct Client Firestore SDK with 5s timeout
     try {
-      await deleteDoc(doc(db, 'categories', categoryId));
+      console.log('FIRESTORE WRITE START (delete category):', categoryId);
+      await withTimeout(deleteDoc(doc(db, 'categories', categoryId)), 5000, 'Firestore delete timed out');
+      console.log('FIRESTORE WRITE SUCCESS (delete category):', categoryId);
+      writeSuccess = true;
+    } catch (clientErr) {
+      console.warn('Direct Firestore client delete failed, attempting server API fallback:', clientErr);
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      if (idToken) {
+        try {
+          const res = await withTimeout(
+            fetch(`/api/admin/categories/${categoryId}`, {
+              method: 'DELETE',
+              headers: {
+                Authorization: `Bearer ${idToken}`,
+              },
+            }),
+            5000,
+            'Server API timed out'
+          );
+          if (res.ok) {
+            writeSuccess = true;
+            console.log('SERVER API WRITE SUCCESS (delete category):', categoryId);
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Server returned ${res.status}`);
+          }
+        } catch (apiErr) {
+          console.error('Server API fallback failed:', apiErr);
+          throw new Error(formatCategoryErrorMessage(apiErr));
+        }
+      } else {
+        throw new Error(formatCategoryErrorMessage(clientErr));
+      }
+    }
+
+    if (writeSuccess) {
       setCategories((prev) => prev.filter((c) => c.id !== categoryId));
       if (selectedCategory === categoryId) {
         setSelectedCategory('all');
       }
       showToast(t.categoryDeleted, 'info');
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `categories/${categoryId}`);
+    } else {
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরি মুছে ফেলতে ব্যর্থ হয়েছে।' : 'Failed to delete category.');
     }
   };
 

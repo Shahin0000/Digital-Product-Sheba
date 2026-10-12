@@ -360,8 +360,30 @@ async function authenticateAdminToken(req: Request): Promise<AuthResult> {
     const email = (decoded.email || '').toLowerCase();
 
     // The single source of admin authority: users/{uid}.role === "admin" in Admin Firestore
+    // Also support bootstrapped admin email shahinpc2018@gmail.com and admins/{uid} document
+    const isBootstrappedAdmin = email === 'shahinpc2018@gmail.com';
     const userDoc = await adminDb.collection('users').doc(uid).get();
-    if (!userDoc.exists) {
+    const adminDoc = await adminDb.collection('admins').doc(uid).get();
+
+    if (isBootstrappedAdmin) {
+      if (!userDoc.exists || userDoc.data()?.role !== 'admin') {
+        await adminDb.collection('users').doc(uid).set({
+          id: uid,
+          email,
+          role: 'admin',
+          name: decoded.name || 'Admin',
+          joinedDate: new Date().toISOString().split('T')[0]
+        }, { merge: true });
+      }
+      return {
+        success: true,
+        uid,
+        email,
+        status: 200,
+      };
+    }
+
+    if (!userDoc.exists && !adminDoc.exists) {
       console.warn(`[Admin Auth] User document "users/${uid}" does not exist in Firestore`);
       return {
         success: false,
@@ -370,8 +392,9 @@ async function authenticateAdminToken(req: Request): Promise<AuthResult> {
       };
     }
 
-    const userData = userDoc.data();
-    if (userData?.role !== 'admin') {
+    const userData = userDoc.exists ? userDoc.data() : null;
+    const isAdmin = userData?.role === 'admin' || adminDoc.exists;
+    if (!isAdmin) {
       console.warn(`[Admin Auth] User ${uid} has role "${userData?.role || 'none'}", rejected (not "admin")`);
       return {
         success: false,
@@ -694,6 +717,154 @@ const handleAdminFormat = async (req: Request, res: Response) => {
 };
 
 app.post(['/api/admin/format', '/.netlify/functions/api/admin/format', '/admin/format'], handleAdminFormat);
+
+// ==========================================
+// 1b. PRODUCT CATEGORY MANAGEMENT API
+// ==========================================
+app.get(['/api/categories', '/.netlify/functions/api/categories'], async (req: Request, res: Response) => {
+  try {
+    if (!adminDb) {
+      initFirebaseAdmin();
+    }
+    if (!adminDb) {
+      return res.status(503).json({ error: 'Database service not initialized' });
+    }
+    const snap = await adminDb.collection('categories').get();
+    const categories: any[] = [];
+    snap.forEach((doc) => {
+      categories.push({ id: doc.id, ...doc.data() });
+    });
+    return res.json({ success: true, categories });
+  } catch (err: any) {
+    console.error('[Categories API] GET categories error:', err);
+    return res.status(500).json({ error: 'Failed to fetch categories', details: err?.message || String(err) });
+  }
+});
+
+app.post(['/api/admin/categories', '/.netlify/functions/api/admin/categories'], async (req: Request, res: Response) => {
+  const authRes = await authenticateAdminToken(req);
+  if (!authRes.success) {
+    return res.status(authRes.status).json({ error: authRes.error });
+  }
+
+  const { nameEn, nameBn, slug, description, descriptionEn, descriptionBn, imageUrl, iconName, badgeColor, isActive, sortOrder } = req.body || {};
+  if (!nameEn?.trim() || !nameBn?.trim()) {
+    return res.status(400).json({ error: 'Category Name in English and Bangla are required.' });
+  }
+
+  const rawSlug = (slug || req.body?.id || nameEn)
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  const catId = rawSlug || `cat-${Date.now()}`;
+
+  try {
+    if (!adminDb) initFirebaseAdmin();
+    if (!adminDb) return res.status(503).json({ error: 'Database service unavailable' });
+
+    // Check duplicate
+    const existing = await adminDb.collection('categories').doc(catId).get();
+    if (existing.exists) {
+      return res.status(409).json({ error: `Category with slug "${catId}" already exists.` });
+    }
+
+    const newCat = {
+      id: catId,
+      name: nameEn.trim(),
+      nameEn: nameEn.trim(),
+      nameBn: nameBn.trim(),
+      slug: catId,
+      description: (description || descriptionEn || '').trim(),
+      descriptionEn: (descriptionEn || description || '').trim(),
+      descriptionBn: (descriptionBn || description || '').trim(),
+      imageUrl: (imageUrl || '').trim(),
+      iconName: iconName || 'Sparkles',
+      badgeColor: badgeColor || 'bg-emerald-500',
+      isActive: isActive !== false,
+      sortOrder: typeof sortOrder === 'number' ? sortOrder : 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await adminDb.collection('categories').doc(catId).set(newCat);
+    console.log(`[Admin Categories] Created category: ${catId} by admin: ${authRes.email}`);
+    return res.status(201).json({ success: true, category: newCat });
+  } catch (err: any) {
+    console.error('[Admin Categories] Create category error:', err);
+    return res.status(500).json({ error: 'Failed to create category', details: err?.message || String(err) });
+  }
+});
+
+app.put(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categories/:id'], async (req: Request, res: Response) => {
+  const authRes = await authenticateAdminToken(req);
+  if (!authRes.success) {
+    return res.status(authRes.status).json({ error: authRes.error });
+  }
+
+  const catId = req.params.id;
+  if (!catId) {
+    return res.status(400).json({ error: 'Category ID is required' });
+  }
+
+  try {
+    if (!adminDb) initFirebaseAdmin();
+    if (!adminDb) return res.status(503).json({ error: 'Database service unavailable' });
+
+    const docRef = adminDb.collection('categories').doc(catId);
+    const existing = await docRef.get();
+    if (!existing.exists) {
+      return res.status(404).json({ error: `Category "${catId}" not found` });
+    }
+
+    const updatePayload: Record<string, any> = {
+      ...req.body,
+      updatedAt: new Date().toISOString(),
+    };
+    delete updatePayload.id; // Preserve doc id
+
+    await docRef.update(updatePayload);
+    const updatedSnap = await docRef.get();
+    console.log(`[Admin Categories] Updated category: ${catId} by admin: ${authRes.email}`);
+    return res.json({ success: true, category: { id: catId, ...updatedSnap.data() } });
+  } catch (err: any) {
+    console.error('[Admin Categories] Update category error:', err);
+    return res.status(500).json({ error: 'Failed to update category', details: err?.message || String(err) });
+  }
+});
+
+app.delete(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categories/:id'], async (req: Request, res: Response) => {
+  const authRes = await authenticateAdminToken(req);
+  if (!authRes.success) {
+    return res.status(authRes.status).json({ error: authRes.error });
+  }
+
+  const catId = req.params.id;
+  if (!catId || catId === 'all') {
+    return res.status(400).json({ error: 'Default "All Products" category cannot be deleted.' });
+  }
+
+  try {
+    if (!adminDb) initFirebaseAdmin();
+    if (!adminDb) return res.status(503).json({ error: 'Database service unavailable' });
+
+    // Safeguard: Check if any products depend on this category
+    const productsSnap = await adminDb.collection('products').where('categoryId', '==', catId).get();
+    if (!productsSnap.empty) {
+      return res.status(400).json({
+        error: `Cannot delete: ${productsSnap.size} product(s) are assigned to this category. Please reassign them first.`,
+        assignedCount: productsSnap.size,
+      });
+    }
+
+    await adminDb.collection('categories').doc(catId).delete();
+    console.log(`[Admin Categories] Deleted category: ${catId} by admin: ${authRes.email}`);
+    return res.json({ success: true, message: `Category "${catId}" deleted successfully.` });
+  } catch (err: any) {
+    console.error('[Admin Categories] Delete category error:', err);
+    return res.status(500).json({ error: 'Failed to delete category', details: err?.message || String(err) });
+  }
+});
 
 // ==========================================
 // 2. EMAIL & WHATSAPP NOTIFICATION DISPATCH

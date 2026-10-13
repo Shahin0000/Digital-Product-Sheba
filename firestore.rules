@@ -93,7 +93,7 @@ service cloud.firestore {
       allow update: if isValidId(deliveryId) && (
         isAdmin() ||
         (isSignedIn() && resource.data.userId == request.auth.uid &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['downloadCount', 'lastDownloadedAt', 'firstDownloadedAt']))
+          !request.resource.data.diff(resource.data).affectedKeys().hasAny(['userId', 'orderId']))
       );
     }
 

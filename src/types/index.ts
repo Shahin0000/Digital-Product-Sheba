@@ -51,6 +51,8 @@ export interface Product {
   downloadAccessType?: 'file_download' | 'credentials' | 'external_link';
   externalAccessUrl?: string;
   externalAccessLink?: string;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface Category {

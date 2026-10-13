@@ -719,6 +719,127 @@ const handleAdminFormat = async (req: Request, res: Response) => {
 app.post(['/api/admin/format', '/.netlify/functions/api/admin/format', '/admin/format'], handleAdminFormat);
 
 // ==========================================
+// 1a. PRODUCT MANAGEMENT API
+// ==========================================
+app.get(['/api/products', '/.netlify/functions/api/products'], async (req: Request, res: Response) => {
+  try {
+    if (!adminDb) {
+      initFirebaseAdmin();
+    }
+    if (!adminDb) {
+      return res.status(503).json({ error: 'Database service not initialized' });
+    }
+    const snap = await adminDb.collection('products').get();
+    const products: any[] = [];
+    snap.forEach((doc) => {
+      products.push({ ...doc.data(), id: doc.id });
+    });
+    return res.json({ success: true, products });
+  } catch (err: any) {
+    console.error('[Products API] GET products error:', err);
+    return res.status(500).json({ error: 'Failed to fetch products', details: err?.message || String(err) });
+  }
+});
+
+app.post(['/api/admin/products', '/.netlify/functions/api/admin/products'], async (req: Request, res: Response) => {
+  const authRes = await authenticateAdminToken(req);
+  if (!authRes.success) {
+    return res.status(authRes.status).json({ error: authRes.error });
+  }
+
+  const { titleEn, titleBn, categoryId, variants, ...rest } = req.body || {};
+  if (!titleEn?.trim() || !titleBn?.trim()) {
+    return res.status(400).json({ error: 'Product title in English and Bangla are required.' });
+  }
+
+  const prodId = (req.body?.id || `prod-${Date.now()}`).trim();
+
+  try {
+    if (!adminDb) initFirebaseAdmin();
+    if (!adminDb) return res.status(503).json({ error: 'Database service unavailable' });
+
+    const newProduct = {
+      ...rest,
+      id: prodId,
+      titleEn: titleEn.trim(),
+      titleBn: titleBn.trim(),
+      categoryId: categoryId?.trim() || 'all',
+      enabled: rest.enabled !== false,
+      variants: Array.isArray(variants) ? variants : [],
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    await adminDb.collection('products').doc(prodId).set(newProduct);
+    console.log(`[Admin Products] Created product: ${prodId} by admin: ${authRes.email}`);
+    return res.status(201).json({ success: true, product: newProduct });
+  } catch (err: any) {
+    console.error('[Admin Products] Create product error:', err);
+    return res.status(500).json({ error: 'Failed to create product', details: err?.message || String(err) });
+  }
+});
+
+app.put(['/api/admin/products/:id', '/.netlify/functions/api/admin/products/:id'], async (req: Request, res: Response) => {
+  const authRes = await authenticateAdminToken(req);
+  if (!authRes.success) {
+    return res.status(authRes.status).json({ error: authRes.error });
+  }
+
+  const prodId = req.params.id?.trim();
+  if (!prodId) {
+    return res.status(400).json({ error: 'Valid Product ID is required' });
+  }
+
+  try {
+    if (!adminDb) initFirebaseAdmin();
+    if (!adminDb) return res.status(503).json({ error: 'Database service unavailable' });
+
+    const docRef = adminDb.collection('products').doc(prodId);
+    const existing = await docRef.get();
+    const existingData = existing.exists ? existing.data() || {} : {};
+
+    const updatePayload = {
+      ...existingData,
+      ...req.body,
+      id: prodId, // Strictly preserve authoritative doc id
+      updatedAt: new Date().toISOString(),
+    };
+
+    await docRef.set(updatePayload, { merge: true });
+    console.log(`[Admin Products] Updated product: ${prodId} by admin: ${authRes.email}`);
+    return res.json({ success: true, product: updatePayload });
+  } catch (err: any) {
+    console.error('[Admin Products] Update product error:', err);
+    return res.status(500).json({ error: 'Failed to update product', details: err?.message || String(err) });
+  }
+});
+
+app.delete(['/api/admin/products/:id', '/.netlify/functions/api/admin/products/:id'], async (req: Request, res: Response) => {
+  const authRes = await authenticateAdminToken(req);
+  if (!authRes.success) {
+    return res.status(authRes.status).json({ error: authRes.error });
+  }
+
+  const prodId = req.params.id?.trim();
+  if (!prodId) {
+    return res.status(400).json({ error: 'Valid Product ID is required' });
+  }
+
+  try {
+    if (!adminDb) initFirebaseAdmin();
+    if (!adminDb) return res.status(503).json({ error: 'Database service unavailable' });
+
+    const docRef = adminDb.collection('products').doc(prodId);
+    await docRef.delete();
+    console.log(`[Admin Products] Deleted product: ${prodId} by admin: ${authRes.email}`);
+    return res.json({ success: true, message: `Product "${prodId}" deleted successfully.` });
+  } catch (err: any) {
+    console.error('[Admin Products] Delete product error:', err);
+    return res.status(500).json({ error: 'Failed to delete product', details: err?.message || String(err) });
+  }
+});
+
+// ==========================================
 // 1b. PRODUCT CATEGORY MANAGEMENT API
 // ==========================================
 app.get(['/api/categories', '/.netlify/functions/api/categories'], async (req: Request, res: Response) => {
@@ -829,12 +950,8 @@ app.put(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categories/
       }
     }
 
-    if (!existing.exists) {
-      return res.status(404).json({ error: `Category "${catId}" not found` });
-    }
-
-    const existingData = existing.data() || {};
-    const targetDocId = docRef.id;
+    const targetDocId = docRef.id || catId;
+    const existingData = existing.exists ? existing.data() || {} : {};
 
     const updatePayload: Record<string, any> = {
       ...existingData,
@@ -844,9 +961,8 @@ app.put(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categories/
     };
 
     await docRef.set(updatePayload, { merge: true });
-    const updatedSnap = await docRef.get();
     console.log(`[Admin Categories] Updated category: ${targetDocId} by admin: ${authRes.email}`);
-    return res.json({ success: true, category: { ...updatedSnap.data(), id: targetDocId } });
+    return res.json({ success: true, category: { ...updatePayload, id: targetDocId } });
   } catch (err: any) {
     console.error('[Admin Categories] Update category error:', err);
     return res.status(500).json({ error: 'Failed to update category', details: err?.message || String(err) });

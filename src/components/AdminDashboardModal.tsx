@@ -131,6 +131,9 @@ export const AdminDashboardModal: React.FC = () => {
     stockCount: number;
   } | null>(null);
 
+  // Product deletion state
+  const [deletingProductId, setDeletingProductId] = useState<string | null>(null);
+
   // Categories Management State
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [categoryToEdit, setCategoryToEdit] = useState<Category | null>(null);
@@ -803,6 +806,31 @@ export const AdminDashboardModal: React.FC = () => {
       showToast(errMsg, 'error');
     } finally {
       setTogglingCategoryId(null);
+    }
+  };
+
+  const handleDeleteProduct = async (prod: Product) => {
+    if (deletingProductId) return;
+
+    if (
+      !window.confirm(
+        lang === 'bn'
+          ? `আপনি কি নিশ্চিত যে "${prod.titleBn || prod.titleEn}" প্রোডাক্টটি স্থায়ীভাবে মুছে ফেলতে চান?`
+          : `Are you sure you want to permanently delete product "${prod.titleEn}"?`
+      )
+    ) {
+      return;
+    }
+
+    setDeletingProductId(prod.id);
+    try {
+      await deleteProduct(prod.id);
+    } catch (err: any) {
+      console.error('[Product] Delete error:', err);
+      const errMsg = err?.message || (lang === 'bn' ? 'প্রোডাক্ট মুছে ফেলতে সমস্যা হয়েছে।' : 'Failed to delete product.');
+      showToast(errMsg, 'error');
+    } finally {
+      setDeletingProductId(null);
     }
   };
 
@@ -1524,16 +1552,9 @@ export const AdminDashboardModal: React.FC = () => {
                                       <Pencil className="w-4 h-4" />
                                     </button>
                                     <button
-                                      onClick={() => {
-                                        if (
-                                          window.confirm(
-                                            `Delete product "${prod.titleEn}" permanently?`
-                                          )
-                                        ) {
-                                          deleteProduct(prod.id);
-                                        }
-                                      }}
-                                      className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer"
+                                      onClick={() => handleDeleteProduct(prod)}
+                                      disabled={deletingProductId === prod.id}
+                                      className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                                       title="Delete Product"
                                     >
                                       <Trash2 className="w-4 h-4" />

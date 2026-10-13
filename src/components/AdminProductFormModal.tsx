@@ -321,13 +321,13 @@ export const AdminProductFormModal: React.FC<AdminProductFormModalProps> = ({
       }
 
       console.log('FIRESTORE WRITE SUCCESS');
-      setIsSubmitting(false);
       onClose();
     } catch (err) {
       console.error('FIRESTORE WRITE ERROR', err);
-      setIsSubmitting(false);
       const errMsg = err instanceof Error ? err.message : String(err);
       showToast(`Firestore save error: ${errMsg}`, 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 

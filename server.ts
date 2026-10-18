@@ -842,6 +842,21 @@ app.delete(['/api/admin/products/:id', '/.netlify/functions/api/admin/products/:
 // ==========================================
 // 1b. PRODUCT CATEGORY MANAGEMENT API
 // ==========================================
+async function syncAdminGlobalCategories(database: Firestore): Promise<void> {
+  try {
+    const snap = await database.collection('categories').get();
+    const categories: any[] = [];
+    snap.forEach((d) => {
+      categories.push({ ...d.data(), id: d.id });
+    });
+    categories.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+    await database.collection('settings').doc('global').set({ categories }, { merge: true });
+    console.log(`[Admin Categories] Synchronized ${categories.length} categories to settings/global`);
+  } catch (err) {
+    console.warn('[Admin Categories] Notice: could not synchronize categories to settings/global:', err);
+  }
+}
+
 app.get(['/api/categories', '/.netlify/functions/api/categories'], async (req: Request, res: Response) => {
   try {
     if (!adminDb) {
@@ -851,10 +866,19 @@ app.get(['/api/categories', '/.netlify/functions/api/categories'], async (req: R
       return res.status(503).json({ error: 'Database service not initialized' });
     }
     const snap = await adminDb.collection('categories').get();
-    const categories: any[] = [];
+    let categories: any[] = [];
     snap.forEach((doc) => {
       categories.push({ ...doc.data(), id: doc.id });
     });
+
+    // Authoritative fallback: If categories collection is empty, check settings/global.categories
+    if (categories.length === 0) {
+      const globalDoc = await adminDb.collection('settings').doc('global').get();
+      if (globalDoc.exists && Array.isArray(globalDoc.data()?.categories)) {
+        categories = globalDoc.data()?.categories;
+      }
+    }
+    categories.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
     return res.json({ success: true, categories });
   } catch (err: any) {
     console.error('[Categories API] GET categories error:', err);
@@ -909,6 +933,7 @@ app.post(['/api/admin/categories', '/.netlify/functions/api/admin/categories'], 
     };
 
     await adminDb.collection('categories').doc(catId).set(newCat);
+    await syncAdminGlobalCategories(adminDb);
     console.log(`[Admin Categories] Created category: ${catId} by admin: ${authRes.email}`);
     return res.status(201).json({ success: true, category: newCat });
   } catch (err: any) {
@@ -961,6 +986,7 @@ app.put(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categories/
     };
 
     await docRef.set(updatePayload, { merge: true });
+    await syncAdminGlobalCategories(adminDb);
     console.log(`[Admin Categories] Updated category: ${targetDocId} by admin: ${authRes.email}`);
     return res.json({ success: true, category: { ...updatePayload, id: targetDocId } });
   } catch (err: any) {
@@ -1006,6 +1032,7 @@ app.delete(['/api/admin/categories/:id', '/.netlify/functions/api/admin/categori
     }
 
     await docRef.delete();
+    await syncAdminGlobalCategories(adminDb);
     console.log(`[Admin Categories] Deleted category: ${actualId} by admin: ${authRes.email}`);
     return res.json({ success: true, message: `Category "${actualId}" deleted successfully.` });
   } catch (err: any) {

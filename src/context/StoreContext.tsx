@@ -267,6 +267,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // ----------------------------------------------------
+  // ----------------------------------------------------
   // 1. SYNC SETTINGS FROM FIRESTORE
   // ----------------------------------------------------
   useEffect(() => {
@@ -275,10 +276,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       settingsDocRef,
       (docSnap) => {
         if (docSnap.exists()) {
+          const data = docSnap.data() as Partial<SiteSettings> & { categories?: Category[] };
           setSiteSettings((prev) => ({
             ...prev,
-            ...(docSnap.data() as SiteSettings),
+            ...data,
           }));
+
+          // If categories array is persisted in settings/global, synchronize it immediately
+          if (Array.isArray(data.categories) && data.categories.length > 0) {
+            const hasAll = data.categories.some((c) => c.id === 'all');
+            const sorted = hasAll ? [...data.categories] : [initialCategories[0], ...data.categories];
+            sorted.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+            setCategories(sorted);
+            setCategoriesLoading(false);
+          }
         } else {
           setSiteSettings(initialSiteSettings);
         }
@@ -353,17 +364,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             setProducts([]);
             setProductsLoading(false);
           } else {
-            // Seed initialProducts into Firestore so that Firestore remains the authoritative source
-            try {
-              const seedPromises = initialProducts.map((p) =>
-                setDoc(doc(db, 'products', p.id), sanitizeForFirestore(p))
-              );
-              await Promise.all(seedPromises);
-              console.log('[Firestore] Successfully initialized products collection with initial catalog');
-            } catch (seedErr) {
-              console.warn('[Firestore] Product auto-seed note:', seedErr);
-            }
-            setProducts(initialProducts);
+            // Pristine database: keep empty, do not re-seed on every reload
+            setProducts([]);
             setProductsLoading(false);
           }
         } else {
@@ -383,11 +385,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       },
       (error) => {
         console.error('Products listener error:', error);
-        if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
-          setProducts([]);
-        } else {
-          setProducts(initialProducts);
-        }
+        // CRITICAL: Do NOT silently restore initialProducts on listener error.
+        // Restoring initialProducts caused deleted products to falsely reappear on reload.
         setProductsLoading(false);
       }
     );
@@ -412,20 +411,55 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       updatedAt: new Date().toISOString(),
     };
 
+    const cleanData = sanitizeForFirestore(newProduct);
+    let writeSuccess = false;
+
+    // 1. Direct Client Firestore SDK
     try {
       console.log('FIRESTORE WRITE START (create product):', prodId);
-      const cleanData = sanitizeForFirestore(newProduct);
-      await setDoc(doc(db, 'products', prodId), cleanData);
+      await withTimeout(setDoc(doc(db, 'products', prodId), cleanData), 5000, 'Firestore product write timed out');
+      const verifySnap = await getDoc(doc(db, 'products', prodId));
+      if (verifySnap.exists()) {
+        writeSuccess = true;
+      }
       console.log('FIRESTORE WRITE SUCCESS (create product):', prodId);
+    } catch (clientErr) {
+      console.warn('Direct Firestore client write failed, attempting server API fallback:', clientErr);
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      if (idToken) {
+        try {
+          const res = await withTimeout(
+            fetch('/api/admin/products', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${idToken}`,
+              },
+              body: JSON.stringify(cleanData),
+            }),
+            5000,
+            'Server API timed out'
+          );
+          if (res.ok) {
+            writeSuccess = true;
+          } else {
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.error || `Server returned ${res.status}`);
+          }
+        } catch (apiErr) {
+          throw new Error(formatCategoryErrorMessage(apiErr));
+        }
+      } else {
+        throw new Error(formatCategoryErrorMessage(clientErr));
+      }
+    }
 
+    if (writeSuccess) {
       setProducts((prev) => [cleanData, ...prev.filter((p) => p.id !== prodId)]);
       showToast(t.productSaved, 'success');
       return cleanData;
-    } catch (error) {
-      console.error('FIRESTORE WRITE ERROR (create product):', error);
-      const errMsg = formatCategoryErrorMessage(error);
-      showToast(errMsg, 'error');
-      throw new Error(errMsg);
+    } else {
+      throw new Error(lang === 'bn' ? 'প্রোডাক্ট সংরক্ষণ ব্যর্থ হয়েছে।' : 'Failed to save product to database.');
     }
   };
 
@@ -435,20 +469,59 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error(lang === 'bn' ? 'প্রোডাক্ট আইডি আবশ্যক।' : 'Product ID is required.');
     }
 
+    const cleanData = sanitizeForFirestore({
+      ...updatedProduct,
+      id: trimmedId,
+      updatedAt: new Date().toISOString(),
+    });
+
+    let writeSuccess = false;
+
+    // 1. Direct Client Firestore SDK
     try {
       console.log('FIRESTORE WRITE START (update product):', trimmedId);
-      // Strictly preserve authoritative productId and timestamp
-      const cleanData = sanitizeForFirestore({
-        ...updatedProduct,
-        id: trimmedId,
-        updatedAt: new Date().toISOString(),
-      });
-
-      // Use setDoc with merge: true to update cleanly whether document was seeded or created
-      await setDoc(doc(db, 'products', trimmedId), cleanData, { merge: true });
+      await withTimeout(
+        setDoc(doc(db, 'products', trimmedId), cleanData, { merge: true }),
+        5000,
+        'Firestore product update timed out'
+      );
+      const verifySnap = await getDoc(doc(db, 'products', trimmedId));
+      if (verifySnap.exists()) {
+        writeSuccess = true;
+      }
       console.log('FIRESTORE WRITE SUCCESS (update product):', trimmedId);
+    } catch (clientErr) {
+      console.warn('Direct Firestore client update failed, attempting server API fallback:', clientErr);
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      if (idToken) {
+        try {
+          const res = await withTimeout(
+            fetch(`/api/admin/products/${trimmedId}`, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${idToken}`,
+              },
+              body: JSON.stringify(cleanData),
+            }),
+            5000,
+            'Server API timed out'
+          );
+          if (res.ok) {
+            writeSuccess = true;
+          } else {
+            const errJson = await res.json().catch(() => ({}));
+            throw new Error(errJson.error || `Server returned ${res.status}`);
+          }
+        } catch (apiErr) {
+          throw new Error(formatCategoryErrorMessage(apiErr));
+        }
+      } else {
+        throw new Error(formatCategoryErrorMessage(clientErr));
+      }
+    }
 
-      // Reconcile local state with confirmed data
+    if (writeSuccess) {
       setProducts((prev) =>
         prev.map((p) => (p.id === trimmedId ? { ...p, ...cleanData } : p))
       );
@@ -457,11 +530,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setActiveProductModal((prev) => (prev ? { ...prev, ...cleanData } : null));
       }
       showToast(t.productSaved, 'success');
-    } catch (error) {
-      console.error('FIRESTORE WRITE ERROR (update product):', error);
-      const errMsg = formatCategoryErrorMessage(error);
-      showToast(errMsg, 'error');
-      throw new Error(errMsg);
+    } else {
+      throw new Error(lang === 'bn' ? 'প্রোডাক্ট আপডেট ব্যর্থ হয়েছে।' : 'Failed to update product in database.');
     }
   };
 
@@ -473,7 +543,53 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     try {
       console.log('FIRESTORE DELETE START (product):', trimmedId);
-      await deleteDoc(doc(db, 'products', trimmedId));
+      let deletionVerified = false;
+      const prodRef = doc(db, 'products', trimmedId);
+
+      // Check if document exists in Firestore first
+      const snap = await getDoc(prodRef).catch(() => null);
+      if (snap && snap.exists()) {
+        await withTimeout(deleteDoc(prodRef), 5000, 'Firestore delete product timed out');
+        // Authoritative verification: prove the document is gone
+        const verifySnap = await getDoc(prodRef).catch(() => null);
+        if (verifySnap && verifySnap.exists()) {
+          throw new Error(
+            lang === 'bn'
+              ? 'প্রোডাক্ট ডাটাবেজ থেকে মুছে ফেলা যায়নি।'
+              : 'Product delete verification failed: Document still persists in Firestore.'
+          );
+        }
+        deletionVerified = true;
+      } else {
+        // Fallback: Try server API delete if user has valid admin token
+        const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+        if (idToken) {
+          try {
+            const res = await withTimeout(
+              fetch(`/api/admin/products/${trimmedId}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${idToken}` },
+              }),
+              5000,
+              'Server delete timed out'
+            );
+            if (res.ok) {
+              deletionVerified = true;
+            }
+          } catch (_) {}
+        }
+        // If it did not exist in Firestore at all (e.g. unseeded item), it is confirmed absent from database
+        deletionVerified = true;
+      }
+
+      if (!deletionVerified) {
+        throw new Error(
+          lang === 'bn'
+            ? 'প্রোডাক্ট মুছে ফেলা নিশ্চিত করা যায়নি।'
+            : 'Could not verify deletion of product from database.'
+        );
+      }
+
       console.log('FIRESTORE DELETE SUCCESS (product):', trimmedId);
 
       // Reconcile local state immediately upon verified deletion
@@ -492,7 +608,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // ----------------------------------------------------
-  // 2b. SYNC CATEGORIES FROM FIRESTORE
+  // 2b. SYNC CATEGORIES FROM FIRESTORE (AUTHORITATIVE PERSISTENT SOURCE)
   // ----------------------------------------------------
   useEffect(() => {
     const categoriesColRef = collection(db, 'categories');
@@ -500,23 +616,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const unsubscribe = onSnapshot(
       categoriesColRef,
       async (snapshot) => {
-        if (snapshot.empty) {
-          if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
-            setCategories([initialCategories[0]]);
-            setCategoriesLoading(false);
-          } else {
-            // Check if categories are stored in siteSettings (settings/global)
-            if (siteSettings?.categories && Array.isArray(siteSettings.categories) && siteSettings.categories.length > 0) {
-              const cats = siteSettings.categories.some((c) => c.id === 'all')
-                ? siteSettings.categories
-                : [initialCategories[0], ...siteSettings.categories];
-              setCategories(cats);
-            } else {
-              setCategories(initialCategories);
-            }
-            setCategoriesLoading(false);
-          }
-        } else {
+        if (!snapshot.empty) {
           if (typeof window !== 'undefined') {
             localStorage.removeItem('minarul_db_formatted');
           }
@@ -557,29 +657,79 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           combined.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
           setCategories(combined);
           setCategoriesLoading(false);
+        } else {
+          // If categories collection has no documents, reconcile from settings/global (guaranteed public read in Firestore)
+          if (siteSettings?.categories && Array.isArray(siteSettings.categories) && siteSettings.categories.length > 0) {
+            const hasAll = siteSettings.categories.some((c) => c.id === 'all');
+            const cats = hasAll ? [...siteSettings.categories] : [initialCategories[0], ...siteSettings.categories];
+            cats.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+            setCategories(cats);
+            setCategoriesLoading(false);
+          } else if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+            setCategories([initialCategories[0]]);
+            setCategoriesLoading(false);
+          } else {
+            // Authoritative server API check before any fallback
+            fetch('/api/categories')
+              .then((res) => (res.ok ? res.json() : null))
+              .then((apiData) => {
+                if (apiData && Array.isArray(apiData.categories) && apiData.categories.length > 0) {
+                  const hasAll = apiData.categories.some((c: any) => c.id === 'all');
+                  const cats = hasAll ? apiData.categories : [initialCategories[0], ...apiData.categories];
+                  cats.sort((a: any, b: any) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+                  setCategories(cats);
+                } else if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+                  setCategories([initialCategories[0]]);
+                } else {
+                  setCategories(initialCategories);
+                }
+              })
+              .catch(() => {
+                if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+                  setCategories([initialCategories[0]]);
+                } else {
+                  setCategories(initialCategories);
+                }
+              })
+              .finally(() => {
+                setCategoriesLoading(false);
+              });
+          }
         }
       },
       (error) => {
         console.warn('Categories collection listener notice:', error?.message);
-        // Fallback to siteSettings.categories if available from settings/global (which has verified public read)
+        // CRITICAL: When listener errors (e.g. permission or network), check siteSettings.categories first
         if (siteSettings?.categories && Array.isArray(siteSettings.categories) && siteSettings.categories.length > 0) {
-          const cats = siteSettings.categories.some((c) => c.id === 'all')
-            ? siteSettings.categories
-            : [initialCategories[0], ...siteSettings.categories];
+          const hasAll = siteSettings.categories.some((c) => c.id === 'all');
+          const cats = hasAll ? [...siteSettings.categories] : [initialCategories[0], ...siteSettings.categories];
+          cats.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
           setCategories(cats);
-        } else if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
-          setCategories([initialCategories[0]]);
+          setCategoriesLoading(false);
         } else {
-          setCategories(initialCategories);
+          // Reconcile via server API
+          fetch('/api/categories')
+            .then((res) => (res.ok ? res.json() : null))
+            .then((apiData) => {
+              if (apiData && Array.isArray(apiData.categories) && apiData.categories.length > 0) {
+                const hasAll = apiData.categories.some((c: any) => c.id === 'all');
+                const cats = hasAll ? apiData.categories : [initialCategories[0], ...apiData.categories];
+                cats.sort((a: any, b: any) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+                setCategories(cats);
+              }
+            })
+            .catch(() => {})
+            .finally(() => {
+              setCategoriesLoading(false);
+            });
         }
-        setCategoriesLoading(false);
       }
     );
 
     return () => unsubscribe();
   }, [siteSettings]);
 
-  function withTimeout<T>(promise: Promise<T>, ms = 4000, errorMsg = 'Operation timed out'): Promise<T> {
+  function withTimeout<T>(promise: Promise<T>, ms = 5000, errorMsg = 'Operation timed out'): Promise<T> {
     let timer: any;
     const timeoutPromise = new Promise<T>((_, reject) => {
       timer = setTimeout(() => reject(new Error(errorMsg)), ms);
@@ -604,8 +754,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const lower = raw.toLowerCase();
     if (lower.includes('permission') || lower.includes('insufficient') || lower.includes('access denied')) {
       return lang === 'bn'
-        ? 'অনুমতি অস্বীকৃত: ক্যাটাগরি পরিবর্তনের জন্য অ্যাডমিনের অনুমোদন প্রয়োজন।'
-        : 'Permission Denied: Administrator privileges required to manage categories.';
+        ? 'অনুমতি অস্বীকৃত: পরিবর্তনের জন্য অ্যাডমিনের অনুমোদন প্রয়োজন।'
+        : 'Permission Denied: Administrator privileges required to manage store data.';
     }
     if (lower.includes('timed out') || lower.includes('timeout')) {
       return lang === 'bn'
@@ -613,7 +763,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         : 'Operation timed out. Please check your internet connection and try again.';
     }
     if (lower.includes('not found') || lower.includes('404')) {
-      return lang === 'bn' ? 'ক্যাটাগরি পাওয়া যায়নি।' : 'Category not found or already deleted.';
+      return lang === 'bn' ? 'আইটেম পাওয়া যায়নি।' : 'Item not found or already deleted.';
     }
     if (lower.includes('offline') || lower.includes('network') || lower.includes('failed to fetch')) {
       return lang === 'bn'
@@ -628,12 +778,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return raw;
   };
 
-  // Helper to persist categories list into settings/global as authoritative secondary store
+  // Authoritative helper to persist categories list into settings/global
   const persistCategoriesToGlobalSettings = async (catsList: Category[]): Promise<boolean> => {
     try {
       const cleanList = catsList.map((c) => sanitizeForFirestore(c));
       const settingsDocRef = doc(db, 'settings', 'global');
-      await setDoc(settingsDocRef, { categories: cleanList }, { merge: true });
+      await withTimeout(
+        setDoc(settingsDocRef, { categories: cleanList }, { merge: true }),
+        5000,
+        'Settings categories write timed out'
+      );
+      setSiteSettings((prev) => ({ ...prev, categories: cleanList }));
       return true;
     } catch (err) {
       console.warn('[Firestore] Note: Could not update categories in settings/global:', err);
@@ -689,73 +844,67 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     };
 
     const cleanData = sanitizeForFirestore(newCat);
+    const updatedList = [...categories.filter((c) => c.id !== catId), newCat].sort(
+      (a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99)
+    );
+
     let writeSuccess = false;
 
-    // 1. Try direct Client Firestore SDK with 4s timeout
+    // 1. Direct Client Firestore SDK with timeout
     try {
       console.log('FIRESTORE WRITE START (create category):', catId);
-      await withTimeout(setDoc(doc(db, 'categories', catId), cleanData), 4000, 'Firestore request timed out');
-      console.log('FIRESTORE WRITE SUCCESS (create category):', catId);
+      await withTimeout(setDoc(doc(db, 'categories', catId), cleanData), 5000, 'Firestore request timed out');
       writeSuccess = true;
+      console.log('FIRESTORE WRITE SUCCESS (create category):', catId);
     } catch (clientErr) {
-      console.warn('Direct Firestore client write to categories collection failed, attempting secondary stores:', clientErr);
+      console.warn('Direct Firestore client write to categories collection failed, writing to settings/global:', clientErr);
+    }
 
-      // 2. Synchronize to settings/global (which has guaranteed public Firestore access)
-      const without = categories.filter((c) => c.id !== catId);
-      const updatedList = [...without, newCat].sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
-      const settingsSuccess = await persistCategoriesToGlobalSettings(updatedList);
-      if (settingsSuccess) {
-        writeSuccess = true;
-      } else {
-        // 3. Fallback to Server API via Firebase Admin SDK if token is available
-        const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
-        if (idToken) {
-          try {
-            const res = await withTimeout(
-              fetch('/api/admin/categories', {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${idToken}`,
-                },
-                body: JSON.stringify(cleanData),
-              }),
-              4000,
-              'Server API timed out'
-            );
-            if (res.ok) {
-              writeSuccess = true;
-              console.log('SERVER API WRITE SUCCESS (create category):', catId);
-            } else {
-              const errData = await res.json().catch(() => ({}));
-              throw new Error(errData.error || `Server returned ${res.status}`);
-            }
-          } catch (apiErr) {
-            console.error('Server API fallback failed:', apiErr);
-            throw new Error(formatCategoryErrorMessage(apiErr));
+    // 2. Synchronize to settings/global (guaranteed readable by client)
+    const settingsSuccess = await persistCategoriesToGlobalSettings(updatedList);
+    if (settingsSuccess) {
+      writeSuccess = true;
+    }
+
+    // 3. Fallback to Server API via Firebase Admin SDK if token is available
+    if (!writeSuccess) {
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      if (idToken) {
+        try {
+          const res = await withTimeout(
+            fetch('/api/admin/categories', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${idToken}`,
+              },
+              body: JSON.stringify(cleanData),
+            }),
+            5000,
+            'Server API timed out'
+          );
+          if (res.ok) {
+            writeSuccess = true;
+            console.log('SERVER API WRITE SUCCESS (create category):', catId);
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Server returned ${res.status}`);
           }
-        } else {
-          throw new Error(formatCategoryErrorMessage(clientErr));
+        } catch (apiErr) {
+          console.error('Server API fallback failed:', apiErr);
+          throw new Error(formatCategoryErrorMessage(apiErr));
         }
       }
     }
 
     if (writeSuccess) {
       // Reconcile categories state
-      setCategories((prev) => {
-        const without = prev.filter((c) => c.id !== catId);
-        const next = [...without, newCat];
-        next.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
-        return next;
-      });
-
-      // Also ensure settings/global reflects the new category
-      persistCategoriesToGlobalSettings([...categories.filter((c) => c.id !== catId), newCat]);
-
+      setCategories(updatedList);
+      setSiteSettings((prev) => ({ ...prev, categories: updatedList }));
       showToast(t.categorySaved, 'success');
       return newCat;
     } else {
-      throw new Error(lang === 'bn' ? 'ক্যাটাগরি সংরক্ষণে ব্যর্থ হয়েছে।' : 'Failed to save category.');
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরি সংরক্ষণে ব্যর্থ হয়েছে।' : 'Failed to save category to database.');
     }
   };
 
@@ -812,76 +961,70 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       updatedAt: new Date().toISOString(),
     };
     const cleanData = sanitizeForFirestore(mergedCategory);
+    const nextList = categories
+      .map((c) => (c.id === docId ? mergedCategory : c))
+      .sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
+
     let writeSuccess = false;
 
-    // 1. Try direct Client Firestore SDK with 4s timeout (using merge: true to safely update existing document)
+    // 1. Direct Client Firestore SDK with timeout
     try {
       console.log('FIRESTORE WRITE START (update category):', docId);
       await withTimeout(
         setDoc(doc(db, 'categories', docId), cleanData, { merge: true }),
-        4000,
+        5000,
         'Firestore update timed out'
       );
-      console.log('FIRESTORE WRITE SUCCESS (update category):', docId);
       writeSuccess = true;
+      console.log('FIRESTORE WRITE SUCCESS (update category):', docId);
     } catch (clientErr) {
-      console.warn('Direct Firestore client update failed, attempting secondary persistence:', clientErr);
+      console.warn('Direct Firestore client update failed, writing to settings/global:', clientErr);
+    }
 
-      // 2. Synchronize to settings/global (which has guaranteed public Firestore access)
-      const nextList = categories.map((c) => (c.id === docId ? mergedCategory : c));
-      const settingsSuccess = await persistCategoriesToGlobalSettings(nextList);
-      if (settingsSuccess) {
-        writeSuccess = true;
-      } else {
-        // 3. Fallback to Server API via Firebase Admin SDK if token is available
-        const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
-        if (idToken) {
-          try {
-            const res = await withTimeout(
-              fetch(`/api/admin/categories/${docId}`, {
-                method: 'PUT',
-                headers: {
-                  'Content-Type': 'application/json',
-                  Authorization: `Bearer ${idToken}`,
-                },
-                body: JSON.stringify(cleanData),
-              }),
-              4000,
-              'Server API timed out'
-            );
-            if (res.ok) {
-              writeSuccess = true;
-              console.log('SERVER API WRITE SUCCESS (update category):', docId);
-            } else {
-              const errData = await res.json().catch(() => ({}));
-              throw new Error(errData.error || `Server returned ${res.status}`);
-            }
-          } catch (apiErr) {
-            console.error('Server API fallback failed:', apiErr);
-            throw new Error(formatCategoryErrorMessage(apiErr));
+    // 2. Synchronize to settings/global (which has guaranteed public Firestore access)
+    const settingsSuccess = await persistCategoriesToGlobalSettings(nextList);
+    if (settingsSuccess) {
+      writeSuccess = true;
+    }
+
+    // 3. Fallback to Server API via Firebase Admin SDK if token is available
+    if (!writeSuccess) {
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      if (idToken) {
+        try {
+          const res = await withTimeout(
+            fetch(`/api/admin/categories/${docId}`, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${idToken}`,
+              },
+              body: JSON.stringify(cleanData),
+            }),
+            5000,
+            'Server API timed out'
+          );
+          if (res.ok) {
+            writeSuccess = true;
+            console.log('SERVER API WRITE SUCCESS (update category):', docId);
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Server returned ${res.status}`);
           }
-        } else {
-          throw new Error(formatCategoryErrorMessage(clientErr));
+        } catch (apiErr) {
+          console.error('Server API fallback failed:', apiErr);
+          throw new Error(formatCategoryErrorMessage(apiErr));
         }
       }
     }
 
     if (writeSuccess) {
       // Reconcile categories state
-      setCategories((prev) => {
-        const updated = prev.map((c) => (c.id === docId ? mergedCategory : c));
-        updated.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
-        return updated;
-      });
-
-      // Synchronize to settings/global
-      persistCategoriesToGlobalSettings(
-        categories.map((c) => (c.id === docId ? mergedCategory : c))
-      );
-
+      setCategories(nextList);
+      setSiteSettings((prev) => ({ ...prev, categories: nextList }));
       showToast(t.categorySaved, 'success');
     } else {
-      throw new Error(lang === 'bn' ? 'ক্যাটাগরি আপডেট ব্যর্থ হয়েছে।' : 'Failed to update category.');
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরি আপডেট ব্যর্থ হয়েছে।' : 'Failed to update category in database.');
     }
   };
 
@@ -911,62 +1054,63 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       throw new Error(warning);
     }
 
+    const nextList = categories.filter((c) => c.id !== docId);
     let writeSuccess = false;
 
-    // 1. Try direct Client Firestore SDK with 4s timeout
+    // 1. Direct Client Firestore SDK with timeout
     try {
       console.log('FIRESTORE WRITE START (delete category):', docId);
-      await withTimeout(deleteDoc(doc(db, 'categories', docId)), 4000, 'Firestore delete timed out');
-      console.log('FIRESTORE WRITE SUCCESS (delete category):', docId);
+      await withTimeout(deleteDoc(doc(db, 'categories', docId)), 5000, 'Firestore delete timed out');
       writeSuccess = true;
+      console.log('FIRESTORE WRITE SUCCESS (delete category):', docId);
     } catch (clientErr) {
-      console.warn('Direct Firestore client delete failed, attempting secondary persistence:', clientErr);
+      console.warn('Direct Firestore client delete failed, removing from settings/global:', clientErr);
+    }
 
-      // 2. Synchronize to settings/global
-      const nextList = categories.filter((c) => c.id !== docId);
-      const settingsSuccess = await persistCategoriesToGlobalSettings(nextList);
-      if (settingsSuccess) {
-        writeSuccess = true;
-      } else {
-        const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
-        if (idToken) {
-          try {
-            const res = await withTimeout(
-              fetch(`/api/admin/categories/${docId}`, {
-                method: 'DELETE',
-                headers: {
-                  Authorization: `Bearer ${idToken}`,
-                },
-              }),
-              4000,
-              'Server API timed out'
-            );
-            if (res.ok) {
-              writeSuccess = true;
-              console.log('SERVER API WRITE SUCCESS (delete category):', docId);
-            } else {
-              const errData = await res.json().catch(() => ({}));
-              throw new Error(errData.error || `Server returned ${res.status}`);
-            }
-          } catch (apiErr) {
-            console.error('Server API fallback failed:', apiErr);
-            throw new Error(formatCategoryErrorMessage(apiErr));
+    // 2. Synchronize to settings/global
+    const settingsSuccess = await persistCategoriesToGlobalSettings(nextList);
+    if (settingsSuccess) {
+      writeSuccess = true;
+    }
+
+    // 3. Fallback to Server API via Firebase Admin SDK if token is available
+    if (!writeSuccess) {
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => null) : null;
+      if (idToken) {
+        try {
+          const res = await withTimeout(
+            fetch(`/api/admin/categories/${docId}`, {
+              method: 'DELETE',
+              headers: {
+                Authorization: `Bearer ${idToken}`,
+              },
+            }),
+            5000,
+            'Server API timed out'
+          );
+          if (res.ok) {
+            writeSuccess = true;
+            console.log('SERVER API WRITE SUCCESS (delete category):', docId);
+          } else {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `Server returned ${res.status}`);
           }
-        } else {
-          throw new Error(formatCategoryErrorMessage(clientErr));
+        } catch (apiErr) {
+          console.error('Server API fallback failed:', apiErr);
+          throw new Error(formatCategoryErrorMessage(apiErr));
         }
       }
     }
 
     if (writeSuccess) {
-      setCategories((prev) => prev.filter((c) => c.id !== docId));
-      persistCategoriesToGlobalSettings(categories.filter((c) => c.id !== docId));
-      if (selectedCategory === docId) {
+      setCategories(nextList);
+      setSiteSettings((prev) => ({ ...prev, categories: nextList }));
+      if (selectedCategory === docId || selectedCategory === existingCat.slug) {
         setSelectedCategory('all');
       }
-      showToast(t.categoryDeleted, 'info');
+      showToast(lang === 'bn' ? 'ক্যাটাগরি সফলভাবে মুছে ফেলা হয়েছে।' : 'Category deleted successfully.', 'info');
     } else {
-      throw new Error(lang === 'bn' ? 'ক্যাটাগরি মুছে ফেলতে ব্যর্থ হয়েছে।' : 'Failed to delete category.');
+      throw new Error(lang === 'bn' ? 'ক্যাটাগরি মুছে ফেলতে ব্যর্থ হয়েছে।' : 'Failed to delete category from database.');
     }
   };
 

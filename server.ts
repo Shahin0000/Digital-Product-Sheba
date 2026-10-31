@@ -487,6 +487,17 @@ app.get(['/api/health', '/.netlify/functions/api/health', '/health'], (req: Requ
   });
 });
 
+app.get(['/api/diagnostic', '/.netlify/functions/api/diagnostic'], (req: Request, res: Response) => {
+  res.json({
+    appName: 'Digital Product Sheba',
+    buildDate: '2026-10-31',
+    firebaseProject: firebaseConfig.projectId || 'digiral-product-service',
+    status: 'active',
+    version: '2.0.0',
+    deploymentTarget: 'Cloudflare Workers / Netlify / Standalone Express',
+  });
+});
+
 app.get(['/api/admin/status', '/.netlify/functions/api/admin/status', '/admin/status'], (req: Request, res: Response) => {
   if (req.query.reload === '1' || req.query.refresh === '1') {
     adminInitializationAttempted = false;

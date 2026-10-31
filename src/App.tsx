@@ -31,6 +31,7 @@ import {
 const MainContent: React.FC = () => {
   const {
     products,
+    productsLoading,
     selectedCategory,
     setSelectedCategory,
     searchQuery,
@@ -206,7 +207,26 @@ const MainContent: React.FC = () => {
         </div>
 
         {/* Product Cards Grid */}
-        {sortedProducts.length === 0 ? (
+        {productsLoading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
+            {[...Array(8)].map((_, i) => (
+              <div
+                key={i}
+                className="bg-white rounded-3xl border border-gray-100 p-4 shadow-xs animate-pulse flex flex-col justify-between"
+              >
+                <div>
+                  <div className="w-full h-44 bg-gray-100 rounded-2xl mb-4" />
+                  <div className="h-4 bg-gray-100 rounded-md w-3/4 mb-2.5" />
+                  <div className="h-3 bg-gray-100 rounded-md w-1/2 mb-4" />
+                </div>
+                <div className="pt-4 border-t border-gray-50 flex items-center justify-between">
+                  <div className="h-5 bg-gray-100 rounded-md w-1/3" />
+                  <div className="h-9 bg-gray-100 rounded-xl w-24" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : sortedProducts.length === 0 ? (
           <div className="text-center py-20 bg-white rounded-3xl border border-gray-200 p-8">
             <Search className="w-12 h-12 text-gray-300 mx-auto mb-3" />
             <h3 className="text-base font-bold text-gray-800 mb-1">

@@ -96,7 +96,7 @@ export const Footer: React.FC = () => {
                 </div>
               ) : (
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 flex items-center justify-center text-slate-950 font-black text-sm">
-                  {(siteSettings.businessName || siteSettings.siteName || 'MFH')
+                  {(siteSettings.businessName || siteSettings.siteName || 'DPS')
                     .split(' ')
                     .map((w) => w[0])
                     .join('')
@@ -105,7 +105,7 @@ export const Footer: React.FC = () => {
                 </div>
               )}
               <span className="font-black text-lg text-white tracking-tight">
-                {siteSettings.businessName || siteSettings.siteName || (lang === 'bn' ? 'ডিজিটাল প্রোডাক্ট সেবা' : 'Minarul Fashion House')}
+                {siteSettings.businessName || siteSettings.siteName || (lang === 'bn' ? 'ডিজিটাল প্রোডাক্ট সেবা' : 'Digital Product Sheba')}
               </span>
             </div>
 
@@ -227,7 +227,7 @@ export const Footer: React.FC = () => {
         {/* Bottom copyright */}
         <div className="border-t border-slate-900 mt-8 pt-6 flex flex-col sm:flex-row items-center justify-between text-xs text-gray-500 gap-3">
           <p>
-            © {new Date().getFullYear()} {siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House'}. All rights reserved. Made for Bangladesh.
+            © {new Date().getFullYear()} {siteSettings.businessName || siteSettings.siteName || 'Digital Product Sheba'}. All rights reserved. Made for Bangladesh.
           </p>
 
           <button

@@ -83,7 +83,7 @@ export const AuthModal: React.FC = () => {
             ) : null}
             <div>
               <span className="text-xs font-bold text-emerald-200 uppercase tracking-wider block">
-                {siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House'}
+                {siteSettings.businessName || siteSettings.siteName || 'Digital Product Sheba'}
               </span>
               <h2 className="text-xl font-black">{isRegister ? t.register : t.login}</h2>
               {pendingCheckout && (

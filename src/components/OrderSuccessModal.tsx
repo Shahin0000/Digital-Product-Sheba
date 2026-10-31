@@ -41,7 +41,7 @@ export const OrderSuccessModal: React.FC = () => {
             )}
             <div>
               <span className="text-xs font-bold text-emerald-200 uppercase tracking-wider block">
-                {siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House'} • {t.orderId}: {lastCreatedOrder.id}
+                {siteSettings.businessName || siteSettings.siteName || 'Digital Product Sheba'} • {t.orderId}: {lastCreatedOrder.id}
               </span>
               <h2 className="text-xl sm:text-2xl font-black tracking-tight leading-tight">
                 {t.orderSuccessTitle}

@@ -201,7 +201,7 @@ export const UserDashboardModal: React.FC = () => {
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-base sm:text-lg font-black text-gray-900">
-                  {siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House'} — {t.dashboard}
+                  {siteSettings.businessName || siteSettings.siteName || 'Digital Product Sheba'} — {t.dashboard}
                 </h2>
                 <span className="px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
                   {currentUser.role}

@@ -189,11 +189,11 @@ export const AdminDashboardModal: React.FC = () => {
 
   // Business Information & Website Branding State
   const [businessSettingsForm, setBusinessSettingsForm] = useState({
-    businessName: siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House',
-    businessAddress: siteSettings.businessAddress || 'House #12, Road #4, Dhanmondi, Dhaka-1205, Bangladesh',
+    businessName: siteSettings.businessName || siteSettings.siteName || 'Digital Product Sheba',
+    businessAddress: siteSettings.businessAddress || 'Dhaka-1205, Bangladesh',
     businessLogo: siteSettings.businessLogo || siteSettings.siteLogo || '',
     faviconUrl: siteSettings.faviconUrl || '',
-    browserTabTitle: siteSettings.browserTabTitle || 'Minarul Fashion House — Digital App & License Store',
+    browserTabTitle: siteSettings.browserTabTitle || 'Digital Product Sheba — Digital App & Subscription Marketplace',
   });
   const [logoPreview, setLogoPreview] = useState<string>(siteSettings.businessLogo || siteSettings.siteLogo || '');
   const [faviconPreview, setFaviconPreview] = useState<string>(siteSettings.faviconUrl || '');
@@ -229,7 +229,7 @@ export const AdminDashboardModal: React.FC = () => {
   // Sync business settings with Firestore
   useEffect(() => {
     setBusinessSettingsForm({
-      businessName: siteSettings.businessName || siteSettings.siteName || 'Minarul Fashion House',
+      businessName: siteSettings.businessName || siteSettings.siteName || 'Digital Product Sheba',
       businessAddress: siteSettings.businessAddress || '',
       businessLogo: siteSettings.businessLogo || siteSettings.siteLogo || '',
       faviconUrl: siteSettings.faviconUrl || '',
@@ -2721,7 +2721,7 @@ export const AdminDashboardModal: React.FC = () => {
                               businessName: e.target.value,
                             })
                           }
-                          placeholder="e.g. Minarul Fashion House"
+                          placeholder="e.g. Digital Product Sheba"
                           className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 font-semibold"
                         />
                         <span className="text-[11px] text-slate-400 mt-1 block">
@@ -2745,7 +2745,7 @@ export const AdminDashboardModal: React.FC = () => {
                               browserTabTitle: e.target.value,
                             })
                           }
-                          placeholder="e.g. Minarul Fashion House — Digital App & License Store"
+                          placeholder="e.g. Digital Product Sheba — Digital App & Subscription Marketplace"
                           className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
                         />
                         <span className="text-[11px] text-slate-400 mt-1 block">

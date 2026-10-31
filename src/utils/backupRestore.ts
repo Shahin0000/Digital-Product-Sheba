@@ -133,7 +133,7 @@ export function deserializeFirestoreData(obj: any): any {
  * Export all application/business collections from Firestore.
  */
 export async function generateFullDatabaseBackup(
-  projectName = 'Minarul Fashion House'
+  projectName = 'Digital Product Sheba'
 ): Promise<{ backup: BackupFileStructure; totalCount: number }> {
   const collectionsData: Record<string, Record<string, any>> = {};
   let totalCount = 0;
@@ -171,11 +171,11 @@ export async function generateFullDatabaseBackup(
  */
 export function downloadBackupFile(backup: BackupFileStructure) {
   const dateStr = new Date().toISOString().split('T')[0];
-  const slug = (backup.projectName || 'minarul-fashion-house')
+  const slug = (backup.projectName || 'digital-product-sheba')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/(^-|-$)/g, '');
-  const filename = `${slug || 'minarul-fashion-house'}-backup-${dateStr}.json`;
+  const filename = `${slug || 'digital-product-sheba'}-backup-${dateStr}.json`;
   const jsonString = JSON.stringify(backup, null, 2);
   const blob = new Blob([jsonString], { type: 'application/json' });
   const downloadUrl = URL.createObjectURL(blob);
@@ -313,7 +313,7 @@ export function validateBackupFile(content: any): {
     summary: {
       backupVersion: String(content.backupVersion),
       createdAt: content.createdAt ? String(content.createdAt) : new Date().toISOString(),
-      projectName: content.projectName ? String(content.projectName) : 'Minarul Fashion House',
+      projectName: content.projectName ? String(content.projectName) : 'Digital Product Sheba',
       totalDocuments: totalDocs,
       collectionCounts,
     },

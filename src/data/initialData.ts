@@ -458,14 +458,14 @@ export const initialProducts: Product[] = [
 ];
 
 export const initialSiteSettings: SiteSettings = {
-  siteName: 'Minarul Fashion House',
-  storeName: 'Minarul Fashion House',
-  businessName: 'Minarul Fashion House',
-  businessAddress: 'House #12, Road #4, Dhanmondi, Dhaka-1205, Bangladesh',
+  siteName: 'Digital Product Sheba',
+  storeName: 'Digital Product Sheba',
+  businessName: 'Digital Product Sheba',
+  businessAddress: 'Dhaka-1205, Bangladesh',
   businessLogo: '',
   siteLogo: '',
   faviconUrl: '',
-  browserTabTitle: 'Minarul Fashion House — Digital App & License Store',
+  browserTabTitle: 'Digital Product Sheba — Digital App & Subscription Marketplace',
   contactEmail: 'support@digitalproductsheba.com',
   supportEmail: 'support@digitalproductsheba.com',
   contactPhone: '+8801712345678',

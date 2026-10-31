@@ -277,9 +277,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       (docSnap) => {
         if (docSnap.exists()) {
           const data = docSnap.data() as Partial<SiteSettings> & { categories?: Category[] };
+          const cleanSettings: Partial<SiteSettings> = { ...data };
+          if (cleanSettings.businessName && /minarul/i.test(cleanSettings.businessName)) {
+            cleanSettings.businessName = 'Digital Product Sheba';
+          }
+          if (cleanSettings.siteName && /minarul/i.test(cleanSettings.siteName)) {
+            cleanSettings.siteName = 'Digital Product Sheba';
+          }
+          if (cleanSettings.storeName && /minarul/i.test(cleanSettings.storeName)) {
+            cleanSettings.storeName = 'Digital Product Sheba';
+          }
+          if (cleanSettings.browserTabTitle && /minarul/i.test(cleanSettings.browserTabTitle)) {
+            cleanSettings.browserTabTitle = 'Digital Product Sheba — Digital App & Subscription Marketplace';
+          }
           setSiteSettings((prev) => ({
             ...prev,
-            ...data,
+            ...cleanSettings,
           }));
 
           // If categories array is persisted in settings/global, synchronize it immediately
@@ -311,7 +324,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       siteSettings.browserTabTitle ||
       siteSettings.businessName ||
       siteSettings.siteName ||
-      'Minarul Fashion House';
+      'Digital Product Sheba — Digital App & Subscription Marketplace';
     document.title = titleToUse;
 
     const faviconToUse = siteSettings.faviconUrl;
@@ -360,7 +373,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       async (snapshot) => {
         if (snapshot.empty) {
           // If the admin deliberately formatted the database, leave products empty
-          if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+          if (typeof window !== 'undefined' && (localStorage.getItem('dps_db_formatted') === 'true' || localStorage.getItem('minarul_db_formatted') === 'true')) {
             setProducts([]);
             setProductsLoading(false);
           } else {
@@ -370,6 +383,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         } else {
           if (typeof window !== 'undefined') {
+            localStorage.removeItem('dps_db_formatted');
             localStorage.removeItem('minarul_db_formatted');
           }
           const loadedProducts: Product[] = [];
@@ -618,6 +632,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       async (snapshot) => {
         if (!snapshot.empty) {
           if (typeof window !== 'undefined') {
+            localStorage.removeItem('dps_db_formatted');
             localStorage.removeItem('minarul_db_formatted');
           }
           const loadedCategories: Category[] = [];
@@ -665,7 +680,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
             cats.sort((a, b) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
             setCategories(cats);
             setCategoriesLoading(false);
-          } else if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+          } else if (typeof window !== 'undefined' && (localStorage.getItem('dps_db_formatted') === 'true' || localStorage.getItem('minarul_db_formatted') === 'true')) {
             setCategories([initialCategories[0]]);
             setCategoriesLoading(false);
           } else {
@@ -678,14 +693,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
                   const cats = hasAll ? apiData.categories : [initialCategories[0], ...apiData.categories];
                   cats.sort((a: any, b: any) => (a.sortOrder ?? 99) - (b.sortOrder ?? 99));
                   setCategories(cats);
-                } else if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+                } else if (typeof window !== 'undefined' && (localStorage.getItem('dps_db_formatted') === 'true' || localStorage.getItem('minarul_db_formatted') === 'true')) {
                   setCategories([initialCategories[0]]);
                 } else {
                   setCategories(initialCategories);
                 }
               })
               .catch(() => {
-                if (typeof window !== 'undefined' && localStorage.getItem('minarul_db_formatted') === 'true') {
+                if (typeof window !== 'undefined' && (localStorage.getItem('dps_db_formatted') === 'true' || localStorage.getItem('minarul_db_formatted') === 'true')) {
                   setCategories([initialCategories[0]]);
                 } else {
                   setCategories(initialCategories);
@@ -2988,7 +3003,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       if (typeof window !== 'undefined') {
-        localStorage.setItem('minarul_db_formatted', 'true');
+        localStorage.setItem('dps_db_formatted', 'true');
+        localStorage.removeItem('minarul_db_formatted');
       }
       setProducts([]);
       setOrders([]);
@@ -3050,6 +3066,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
 
       if (typeof window !== 'undefined') {
+        localStorage.removeItem('dps_db_formatted');
         localStorage.removeItem('minarul_db_formatted');
       }
       if (onProgress) {

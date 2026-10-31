@@ -80,7 +80,7 @@ export const Header: React.FC = () => {
                 </div>
               ) : (
                 <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-md shadow-emerald-500/20 group-hover:scale-105 transition-transform font-black text-lg">
-                  {(siteSettings.businessName || siteSettings.siteName || 'MFH')
+                  {(siteSettings.businessName || siteSettings.siteName || 'DPS')
                     .split(' ')
                     .map((w) => w[0])
                     .join('')
@@ -90,7 +90,7 @@ export const Header: React.FC = () => {
               )}
               <div className="flex flex-col">
                 <span className="font-extrabold text-base sm:text-xl text-gray-900 tracking-tight leading-none group-hover:text-emerald-600 transition-colors">
-                  {siteSettings.businessName || siteSettings.siteName || (lang === 'bn' ? 'ডিজিটাল প্রোডাক্ট সেবা' : 'Minarul Fashion House')}
+                  {siteSettings.businessName || siteSettings.siteName || (lang === 'bn' ? 'ডিজিটাল প্রোডাক্ট সেবা' : 'Digital Product Sheba')}
                 </span>
                 <span className="text-[10px] sm:text-xs text-gray-500 font-medium tracking-wide mt-1">
                   {lang === 'bn' ? 'বিশ্বস্ত অ্যাপস ও সাবস্ক্রিপশন' : 'Digital App & License Store'}
